@@ -4,6 +4,57 @@ Operational log for `rak3112-rs485-node` firmware. Append-only.
 
 ## Phase 1 attempts
 
+### Attempt 2 — 2026-05-01 — FAIL on smoke-gate step 3 (PlatformIO + ESP-IDF version mismatch)
+
+**Branch:** `fix/p1-pio-srcdir`. P1-FIX-1 (src_dir fix + gate-execution discipline) committed and applied.
+
+**Smoke-gate trail.**
+
+| Step | Status | Evidence |
+|---|---|---|
+| 1. `pre-commit run --all-files` | ✅ PASS | All 6 hooks Passed |
+| 2. `idf.py build` (ESP-IDF v5.5.4 pristine) | ✅ PASS | Ninja near-no-op rebuild; `firmware/build/rak3112_rs485_node.bin` 183 328 bytes — **byte-identical to Attempt 1**, confirming pristine-v5.5.4 reproducibility |
+| 3. `pio run -e esp32-s3-devkitc-1` (bare, no pipes) | ❌ **FAIL** | Exit 1 after 2.36 s. `CMake Error at CMakeLists.txt:1 (cmake_minimum_required): CMake 3.20 or higher is required. You are running version 3.16.4` |
+| 4. `gitleaks detect --no-banner --redact` | ✅ PASS | 8 commits scanned, 223.7 KB, no leaks |
+| 5. layout check | ✅ PASS | `tests/host/CMakeLists.txt` present |
+
+**Root cause analysis — substantive.**
+
+The `[platformio] src_dir = main` fix was correct and worked: PlatformIO this time entered the build phase rather than aborting at the directory check. The new failure surfaced a deeper issue: **the dual-build invariant in §3 #6 has been silently using two different ESP-IDF versions all along.**
+
+| Build path | ESP-IDF version | CMake version |
+|---|---|---|
+| `idf.py build` (local) | v5.5.4 (system, `~/esp/esp-idf-v5.5.4/`) | system or ESP-IDF-bundled, ≥ 3.20 |
+| `pio run` (local) | **v5.2.1 (PlatformIO-bundled in `platform = espressif32 @ ~6.7.0`)** | **3.16.4 (PlatformIO-bundled)** |
+| `idf.py` (CI, `espressif/esp-idf-ci-action@v1` pinned to v5.5.4) | v5.5.4 | matched |
+
+Our `firmware/CMakeLists.txt` says `cmake_minimum_required(VERSION 3.20)` because that's the floor mandated by ESP-IDF v5.5.x. PlatformIO's bundled CMake 3.16.4 (matching its bundled ESP-IDF v5.2.1) cannot satisfy this. ESP-IDF v5.5 raised the CMake floor from 3.16 → 3.20 between v5.2 and v5.5.
+
+**This means the rev3 contract's "dual-build invariant" is unfulfillable with the current pin choices.** The two builds were never building the same thing — they shared source but compiled it against materially different ESP-IDF and CMake versions. Phase 1 Attempt 1 happened to pass step 2 and *fail at step 3 for an unrelated reason*; if the src_dir issue hadn't masked it, this CMake-version mismatch would have surfaced anyway in any subsequent attempt.
+
+**Strategic options (require user decision — not auto-applicable):**
+
+1. **Bump platform-espressif32 pin to a version that bundles ESP-IDF v5.5+.** As of this date, mainline platform-espressif32 ≤ 6.10.x bundles v5.4.x at best; v5.5 may require the Pioarduino community fork (`platform = https://github.com/pioarduino/platform-espressif32.git`) or waiting for upstream. If a release exists that bundles v5.5.x, pin to it and re-run; otherwise (3) below.
+
+2. **Lower the contract's ESP-IDF pin to v5.3.x or v5.4.x to match what PlatformIO can offer.** Forfeits being on the latest stable, but preserves the dual-build invariant.
+
+3. **Drop PlatformIO from the local smoke-gate.** Use `idf.py` only locally; PlatformIO retained for CI **only** with whatever ESP-IDF version platform-espressif32 currently bundles, treating PIO as a separate "smoke build" job rather than a dual-build mirror. Downgrades the dual-build invariant from "byte-equivalent" to "both-frameworks-compile". This is the path of least resistance and matches what most ESP-IDF + PIO projects do in practice.
+
+4. **Replace PlatformIO entirely** with a docker-pinned ESP-IDF v5.5.4 image for CI parity. Cleanest for reproducibility but adds a dependency.
+
+**Recovery state.**
+
+- ESP-IDF stash restored: `git stash pop` clean apply, two expected files modified, `idf.py --version` back to `v5.5.4-dirty`. Shared `~/esp/esp-idf-v5.5.4/` is unperturbed.
+- Repo on branch `fix/p1-pio-srcdir`, P1-FIX-1 committed (src_dir fix + gate-execution discipline + audit). No tag.
+- ESP-IDF Attempt-2 build artefacts in `firmware/build/` (byte-identical to Attempt 1 — 183 328 bytes, IDF_VER=v5.5.4 clean).
+- PlatformIO partial state in `firmware/.pio/` (no firmware.bin produced).
+
+**Action plan (awaiting user direction on options 1–4 above).** No further work on this branch until the strategic choice is made. The platformio.ini / CLAUDE.md edits in P1-FIX-1 remain valid regardless of which option is chosen — they were a real fix, just not the only one needed.
+
+**Full PIO log:** `/tmp/p1-attempt2-pio.log`. ESP-IDF log: `/tmp/p1-attempt2-idf.log`.
+
+---
+
 ### Attempt 1 — 2026-05-01 — FAIL on smoke-gate step 3 (PlatformIO build)
 
 **Smoke-gate trail.**

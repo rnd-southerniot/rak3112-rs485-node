@@ -52,3 +52,27 @@ Smoke-gate command also needs hardening: capture `pio run`'s exit code directly 
 5. If green, merge `fix/p1-pio-srcdir` back to `main`, tag `phase-1-scaffold-green`.
 
 **Full PlatformIO log:** `/tmp/p1-pio-build.log` (303.43 s, 7 MB). Will be moved into the repo as `docs/logs/p1-attempt1-pio.log` if the user wants it durable; not committed by default.
+
+---
+
+## Gate design principles (2026-05-01, lesson from Phase 1 Attempt 1)
+
+Smoke-gate commands MUST have unambiguous exit codes.
+
+- ❌ **NEVER** pipe gate commands through `tee` / `tail` / `head` / `grep` / `awk` / `sed`. Pipes mask the upstream exit code unless explicit `set -o pipefail` + `${PIPESTATUS[@]}` handling is used. Even then, the cognitive overhead defeats the purpose of a "smoke gate".
+- ✅ Run gate commands **bare**. Exit code is the gate.
+- ✅ If forensic logging is needed, capture it **outside** the gate, in the on-failure procedure below. Not every run needs a log on disk; failures do, and those are captured deliberately.
+
+**Audit (2026-05-01):** The contract `CLAUDE.md` smoke-gate definitions in §5 were already pipe-clean. The masking in Attempt 1 came from the **operator** wrapping `pio run` in `… | tee /tmp/p1-pio-build.log | tail -3` at execution time to keep chat output short. Lesson: the contract is sound by construction, but operator discipline at runtime is the second line of defence — and it was the line that failed. Codified as Guardrail §3 #9 in `CLAUDE.md` rev3+.
+
+### On-failure forensic-capture procedure
+
+When a gate fails:
+1. Capture the offending command's output deliberately, with timestamp:
+   ```bash
+   <gate-command> 2>&1 | tee /tmp/p<phase>-<step>-$(date +%s).log
+   ```
+2. Tail the relevant section into the RUNBOOK attempt entry as evidence.
+3. Optionally promote the full log into `docs/logs/` if the failure mode is novel and worth durable retention.
+
+This is the *only* place where pipes are sanctioned, and only after the gate has already failed.

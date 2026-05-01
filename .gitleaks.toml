@@ -1,0 +1,11 @@
+title = "rak3112-rs485-node gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "project-wide allow-list"
+paths = [
+    '''hardware/schematic/.*''',
+    '''\.env\.example$''',
+]

@@ -158,3 +158,24 @@ The rule generalises beyond ESP-IDF/PlatformIO. It applies to: Python + pip-tool
 **Reference incident:** Phase 1 Attempt 2, 2026-05-01. Resolution: PlatformIO dropped entirely (rev4); single canonical build path = ESP-IDF.
 
 **Self-critique recorded for the next review:** the chat-side Claude that approved rev2/rev3 toolchain pins checked each pin individually, not jointly. Same blind spot the operator (Arif) flagged on themselves. Codified here so the next review surface adopts the joint-consistency check.
+
+---
+
+## Aesthetic vs. functional preference (2026-05-01, lessons from rev3 R3, rev5 push-back 1, and SHA-truncation pattern)
+
+When a review choice reduces to **"less visible state vs. more visible state"**, default to MORE visible state if the visible state is functionally correct.
+
+- Empty-but-tagged remote > drafting in temporary location
+- Logged §15 entry > argument from chat-side memory
+- Verbose State block with all attempts > squashed-clean tag
+- Full SHA in tag annotations and reports > truncated SHA "for readability"
+
+Aesthetic preferences for "clean" or "minimal" should not override functional reasons for explicit state. The visible state is the durable forensic record. **The cost of verbosity is real but bounded; the cost of erased state is unbounded.**
+
+**Reference incidents:**
+
+- **Phase 1 review rev3 R3 (gateway IP, memory vs. §15).** Operator argued for replacing the dated `192.168.20.150` (per global CLAUDE.md §11+§15) with `192.168.15.150` based on a memory snippet. Resolution: the dated State block §15 entry is authoritative; memory snippets that contradict logged state are wrong by default. Aesthetic argument: "single IP claim feels cleaner than relocation history". Functional cost: writing wrong infrastructure into a production-grade contract.
+- **Phase 2 review rev5 push-back 1 (hardware repo timing).** Operator initially preferred deferring hardware-repo creation to Phase 2 *exit* ("avoid empty remote during research work"). Resolution: hardware repo at Phase 2 *entry*, with V1.0 archive tag. Aesthetic argument: "empty remote feels untidy". Functional cost: drafting ADR-001 in the wrong repo, then migrating at exit — a copy-paste boundary that violates single-canonical-source.
+- **Throughout Phase 1 reports (SHA truncation).** Chat-side Claude truncated `a2f3d6044f9458aa38a492cad531c53071b2f829a33f5fd2635db72271fe5116` to `a2f3d604…fe5116` in chat reports "for readability". Caught at near-miss stage — the tag annotation itself had the full hash; only the chat summary was truncated. Aesthetic argument: "shorter is more readable". Functional cost: forensic forward-compatibility (verifying a tag's annotated SHA against the actual binary requires the full hash).
+
+**Promotion candidate.** Like the "single canonical source" lesson, this rule generalises beyond build systems: it applies to any review surface where "tidy" competes with "explicit". Worth promoting from project-RUNBOOK to global CLAUDE.md when the operator next does a global doc-discipline pass. Not actioning the global edit unilaterally — same standing rule as the Phase 1 lesson promotions.

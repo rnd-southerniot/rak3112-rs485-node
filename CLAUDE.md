@@ -1,6 +1,6 @@
 # rak3112-rs485-node — Execution Contract (firmware)
 
-> **Status:** rev4 — Phase 1 Attempt 3 (post-PIO-drop). 2026-05-01.
+> **Status:** rev5 — Phase 2 entry criteria locked 2026-05-01.
 > **Inherits from:** `~/.claude/CLAUDE.md` (global, M5 Pro profile).
 > **Owner:** rnd-southerniot · `arif-southern`
 > **Repo path:** `~/Developer/projects/firmware/rak3112-rs485-node/`
@@ -306,11 +306,323 @@ test -d tests/host && test -f tests/host/CMakeLists.txt   # expect: exit 0
 
 ---
 
-### Phase 2 — HW bring-up prep · **scoped, not yet detailed**
+### Phase 2 — HW bring-up prep · **ENTRY CRITERIA LOCKED 2026-05-01 (rev5)**
 
-**Entry prereq:** **OQ-7 resolved** — ESP-IDF patches vendored into `firmware/esp-idf-patches/` with attribution and intent documentation; build script applies them; CI mirrors. Verify by checking that a fresh clone of ESP-IDF v5.5.4 + applied patches produces the same patch-applied behaviour.
+**Goal.** Produce a signed-off `ADR-001-pin-map.md` in the **hardware repo** (`rnd-southerniot/rak3112-rs485-node-hw`), covering every ESP32-S3 GPIO / net assignment in the V1.0 schematic, sufficient to drive Phase 3 first-flash without guesswork. Resolve OQ-1, OQ-2, OQ-5. Vendor ESP-IDF patches per OQ-7 (asymmetric outcome acceptable — see Footnote 1).
 
-Render the schematic PDF (poppler installed), extract every ESP32-S3 pin / net assignment from the `.esch` files, write **ADR-001 (pin map)** covering: RS-485 TX/RX/DE/RE, RS-232 TX/RX, WS2812 data, button GPIO, LED enable, RT6160 EN, antenna IPEX, BOOT/RESET straps. Resolve **OQ-1** (RS-232 keep/DNP/console) and **OQ-2** (PSRAM enable + Quad vs Octal). Cross-reference the hardware-side ADR by ID. User signs off ADR-001 before Phase 3 flashes anything.
+**Entry criteria.** All must hold before Phase 2 *advances* (i.e., before tag `phase-2-pinmap-locked` is created). Numbered in execution order. Each criterion has its own bare smoke gate (per Guardrail §3 #9). Cross-repo gates verify *the coupling*, not the other repo's content (per Footnote 3).
+
+#### EC-1. OQ-7 resolved — ESP-IDF patches handled
+
+- `usb_types_ch9.h` patch: investigated, attributed (upstream PR # if exists, local origin if not), vendored to `firmware/esp-idf-patches/0001-fix-iad-desc-size.patch` with header documenting context. Applied via project-side `firmware/scripts/apply-patches.sh`.
+- `esp_lcd_panel_io_parl.c` patch: intent investigated. **If intent cannot be determined, the patch is NOT vendored** — stays in local ESP-IDF as personal modification, documented in `docs/RUNBOOK.md` under "ESP-IDF local modifications (not project-bound)". Don't vendor an undocumented patch.
+- See Footnote 1 for the asymmetric-outcome case.
+
+**`apply-patches.sh` specification (EC-1 deliverable):**
+
+```bash
+#!/usr/bin/env bash
+# firmware/scripts/apply-patches.sh
+# Applies project-vendored ESP-IDF patches to $IDF_PATH.
+# Idempotent: safe to re-run (skips already-applied via git apply --reverse --check).
+# --dry-run flag verifies all patches apply cleanly without touching the tree.
+set -euo pipefail
+
+IDF_PATH="${IDF_PATH:-$HOME/esp/esp-idf-v5.5.4}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PATCHES_DIR="$SCRIPT_DIR/../esp-idf-patches"
+
+DRY_RUN=false
+[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
+
+# Preconditions — clear errors over confusing apply failures
+test -d "$IDF_PATH/.git" || {
+    echo "ERROR: IDF_PATH ($IDF_PATH) is not a git repository" >&2
+    exit 2
+}
+test -d "$PATCHES_DIR" || {
+    echo "ERROR: PATCHES_DIR ($PATCHES_DIR) does not exist" >&2
+    exit 2
+}
+
+# Deterministic ordering across locales (load-bearing for >= 2 patches)
+for patch in $(printf '%s\n' "$PATCHES_DIR"/*.patch | LC_ALL=C sort); do
+    [[ -f "$patch" ]] || continue
+    if git -C "$IDF_PATH" apply --check "$patch" 2>/dev/null; then
+        if $DRY_RUN; then
+            echo "Would apply: $(basename "$patch")"
+        else
+            git -C "$IDF_PATH" apply "$patch"
+            echo "Applied: $(basename "$patch")"
+        fi
+    elif git -C "$IDF_PATH" apply --reverse --check "$patch" 2>/dev/null; then
+        echo "Already applied: $(basename "$patch")"
+    else
+        echo "FAIL: $(basename "$patch") does not apply cleanly to $IDF_PATH" >&2
+        exit 1
+    fi
+done
+```
+
+**Verification routine (fresh-clone, dev tree never touched):**
+
+```bash
+# EC-1 verification — proves patch series is self-contained against pristine v5.5.4.
+# Verification is destructive-but-isolated: temp clone is one-shot,
+# ~/esp/esp-idf-v5.5.4/ is never modified, no stash dance needed.
+
+ESP_IDF_VERIFY_ROOT="$(mktemp -d)"
+ESP_IDF_VERIFY_PATH="$ESP_IDF_VERIFY_ROOT/esp-idf-v5.5.4"
+
+# On any failure, retain the temp dir for forensic inspection.
+# rm -rf only runs on the success path below.
+trap 'echo "Verification artifacts retained at: $ESP_IDF_VERIFY_ROOT" >&2' ERR
+
+git clone --depth 1 --branch v5.5.4 \
+    https://github.com/espressif/esp-idf.git "$ESP_IDF_VERIFY_PATH"
+( cd "$ESP_IDF_VERIFY_PATH" && git submodule update --init --recursive )
+
+IDF_PATH="$ESP_IDF_VERIFY_PATH" firmware/scripts/apply-patches.sh
+IDF_PATH="$ESP_IDF_VERIFY_PATH" "$ESP_IDF_VERIFY_PATH/tools/idf.py" -C firmware build
+
+trap - ERR
+rm -rf "$ESP_IDF_VERIFY_ROOT"   # success path only
+```
+
+**Rollback (EC-1 specific).** If `apply-patches.sh` itself becomes the failure point, `git revert` on the patch-add commit does NOT restore a working build path — the script would still be broken or missing. Fall back to building against `~/esp/esp-idf-v5.5.4/` working tree as it stood pre-Phase-2 (with whichever local mods exist), and re-evaluate whether vendoring is the right approach. Document the failure mode in `docs/RUNBOOK.md` under "Phase 2 attempts".
+
+**Smoke gate (firmware repo, bare):**
+
+```bash
+test -f firmware/esp-idf-patches/0001-fix-iad-desc-size.patch
+head -10 firmware/esp-idf-patches/0001-fix-iad-desc-size.patch | grep -q "^Subject:"
+test -x firmware/scripts/apply-patches.sh
+firmware/scripts/apply-patches.sh --dry-run
+. ~/esp/esp-idf-v5.5.4/export.sh
+idf.py -C firmware build
+```
+
+#### EC-2. Schematic rendered, JSON-extracted, and cross-checked
+
+- PDF rendered to PNG (per-page, 300 DPI) via poppler: `pdftoppm -r 300 schematic.pdf page -png`.
+- Both PDF and PNG committed to **hardware repo** at `hardware/schematic/v1.0/`.
+- SHA-256 of PDF recorded in `hardware/schematic/v1.0/CHECKSUMS.txt` (full hashes — no truncation).
+- Pin-label extraction from `.esch` JSON files (source-of-truth) dumped to `hardware/schematic/v1.0/esch-pin-labels.json`.
+- Diff PNG-derived pin labels vs. `.esch` JSON labels. Discrepancies flagged in ADR-001. **JSON wins on conflicts** (PDF can be export-stale).
+
+**Smoke gate (hardware repo):**
+
+```bash
+test -f hardware/schematic/v1.0/schematic.pdf
+ls hardware/schematic/v1.0/page-*.png >/dev/null   # at least one page
+test -f hardware/schematic/v1.0/esch-pin-labels.json
+test -f hardware/schematic/v1.0/CHECKSUMS.txt
+sha256sum -c hardware/schematic/v1.0/CHECKSUMS.txt
+jq empty hardware/schematic/v1.0/esch-pin-labels.json
+```
+
+#### EC-3. Schematic ↔ BOM consistency check (severity-gated)
+
+> **Execution order:** EC-3 must complete with **zero MAJOR mismatches** before EC-4 (pin-map extraction) begins. MINOR mismatches go to ADR-001 appendix without blocking.
+
+| Severity | Examples | Treatment |
+|---|---|---|
+| **MAJOR** | Component reference designator in schematic but missing from BOM (or vice versa); U-prefix (active part) absent from one side; net connectivity that implies a component not listed in BOM | **Blocks EC-4.** Must resolve before pin-map extraction begins. |
+| **MINOR** | Footprint code variation (0603 vs 0402); value tolerance disagreement; manufacturer-part-number alternates; descriptive value vs exact spec | **Flagged in ADR-001 appendix**, doesn't block. |
+
+- BOM (extracted from `.epro` `project.json` BOM tree in Phase 0) cross-referenced against schematic component instances.
+- For each schematic ref designator: confirm presence in BOM with matching value/footprint.
+- For each BOM line: confirm presence in schematic.
+- Mismatches classified per severity table above.
+- Pass: **zero MAJOR mismatches**. Minor count ≥ 0, all logged.
+
+**Smoke gate (hardware repo):**
+
+```bash
+test -f hardware/adr/ADR-001-pin-map-DRAFT.md
+grep -q "^## Schematic-BOM consistency" hardware/adr/ADR-001-pin-map-DRAFT.md
+grep -qE "^MAJOR mismatches: 0$" hardware/adr/ADR-001-pin-map-DRAFT.md
+```
+
+#### EC-4. Pin-map raw extraction
+
+- Every ESP32-S3 GPIO referenced in the schematic extracted into `hardware/adr/ADR-001-pin-map-DRAFT.md` (in the hardware repo, per EC-8).
+- Format: table with columns `Pin # | GPIO | Schematic net name | Connected to | Strap pin? | Boot-state requirement | Notes`.
+- Source: `.esch` JSON (preferred) with PNG visual confirmation.
+- No firmware code references this draft yet — research artifact only.
+
+**Smoke gate (hardware repo):**
+
+```bash
+test -f hardware/adr/ADR-001-pin-map-DRAFT.md
+grep -q "^| Pin # | GPIO | Schematic net" hardware/adr/ADR-001-pin-map-DRAFT.md
+test "$(grep -cE '^\| [0-9]+ \| GPIO' hardware/adr/ADR-001-pin-map-DRAFT.md)" -gt 0
+```
+
+#### EC-5. OQ-1 resolved — RS-232 disposition + H1 purpose closure
+
+- **EC-5a (RS-232 / MAX3232):** Schematic review confirms whether MAX3232 shares UART pins with RS-485 transceiver. Decision documented in ADR-001: DNP / repurpose-as-console / keep-on-separate-UART. Default position carried over: **DNP for production** unless schematic shows independent UART.
+- **EC-5b (H1 header — PZ254V-11-02P 2-pin):** §0 lists this as "purpose TBD — likely UART debug". Schematic + BOM review confirms net connections. Decision documented in ADR-001: UART debug / power input / aux IO / DNP. **§0 row updated** in this firmware contract to reflect resolved purpose (rev6 amendment, post-Phase-2-sign-off).
+
+**Smoke gate (hardware repo):**
+
+```bash
+grep -q "^## OQ-1: RS-232 disposition" hardware/adr/ADR-001-pin-map-DRAFT.md
+grep -q "^## H1 header purpose" hardware/adr/ADR-001-pin-map-DRAFT.md
+```
+
+#### EC-6. OQ-2 resolved — PSRAM mode
+
+- RAK3112 datasheet section on flash/PSRAM read in full.
+- **Cross-check:** RAK's published reference firmware for RAK3112 (Arduino-ESP32 BSP examples) inspected for the mode they configure. Two sources beat one.
+- Mode (Quad/Octal) confirmed and documented in ADR-001.
+- `firmware/sdkconfig.defaults` updated: `CONFIG_SPIRAM=y` + `CONFIG_SPIRAM_MODE_OCT=y` or `CONFIG_SPIRAM_MODE_QUAD=y`.
+- **No mini-flash for verification** — Phase 2 maintains no-hardware-touch discipline.
+- ADR-001 records **expected ESP32-S3 bootloader log signature** for PSRAM init in chosen mode (e.g., octal: `Found 8MB PSRAM device` + `Adding pool of … bytes of internal memory`; quad: equivalent line per ESP-IDF source). Phase 3 first-flash gate uses signature for fast PSRAM verification ("boot log contains success line within 2 s of reset"), avoiding a debug cycle if mode is wrong.
+- Phase 2 verification: `idf.py build` succeeds (config syntax valid). Functional verification deferred to Phase 3.
+
+**Smoke gate (firmware + hardware repos):**
+
+```bash
+grep -E "^CONFIG_SPIRAM_MODE_(OCT|QUAD)=y$" firmware/sdkconfig.defaults
+. ~/esp/esp-idf-v5.5.4/export.sh
+idf.py -C firmware build
+grep -q "^## OQ-2: PSRAM mode" hardware/adr/ADR-001-pin-map-DRAFT.md
+grep -q "^### Expected boot-log signature" hardware/adr/ADR-001-pin-map-DRAFT.md
+```
+
+#### EC-7. OQ-5 resolved — antenna variant
+
+- Visual inspection of physical RAK3112 module on bench.
+- Variant determined: IPEX MHF4 connector / onboard PCB RF pads / RF-pad variant per `-9-SM-I` decoding.
+- Documented in ADR-001 with photograph in `hardware/photos/module-antenna-2026-MM-DD.jpg` (in hardware repo).
+- Phase 5 LoRa antenna routing implications flagged in ADR-001.
+
+**Smoke gate (hardware repo):**
+
+```bash
+ls hardware/photos/module-antenna-*.jpg >/dev/null
+grep -q "^## OQ-5: antenna variant" hardware/adr/ADR-001-pin-map-DRAFT.md
+```
+
+#### EC-8. Hardware repo created (with slim CLAUDE.md)
+
+- `rnd-southerniot/rak3112-rs485-node-hw` repo created on GitHub (private).
+- Initial push contains:
+  - V1.0 schematic reference: PDF, PNG renders, `.esch` JSON dumps, BOM extract, `CHECKSUMS.txt`.
+  - **Slim hardware-repo `CLAUDE.md`**: execution contract covering ADR drafting discipline, sign-off rules, tag conventions (`adr-NNN-locked`, `schematic-vX.Y-archive`), and the hardware-side smoke gate definitions.
+- Tagged `v1.0-archive` as immutable V1.0 reference point.
+- Firmware repo gains `HARDWARE_REV.md` pinning hardware repo's `v1.0-archive` tag SHA (full 40-char hex, no truncation).
+- ADR-001 drafts directly in hardware repo's `adr/` directory — **no temporary staging** in firmware repo.
+- **Note:** V1.1 schematic CLAUDE.md regeneration (option β from Phase 1 closure) is NOT a Phase 2 deliverable. The slim CLAUDE.md from this EC is sufficient for Phase 2 ADR-001 work; full V1.1 rework is a separate future workstream.
+
+`HW_REPO_PATH` resolution priority (used by firmware-side gates):
+
+1. Environment variable `HW_REPO_PATH` if set
+2. Config file `~/.config/siot/rak3112-rs485-node.env` (per-machine)
+3. Default: `~/Developer/projects/pcb-design/rak3112-rs485-node-hw`
+
+**Smoke gate (firmware repo, verifying *the coupling* only — per Footnote 3):**
+
+```bash
+test -f HARDWARE_REV.md
+grep -qE '^pinned_sha:\s+[a-f0-9]{40}$' HARDWARE_REV.md
+HW_SHA=$(awk '/^pinned_sha:/ {print $2}' HARDWARE_REV.md)
+HW_REPO_PATH="${HW_REPO_PATH:-$HOME/Developer/projects/pcb-design/rak3112-rs485-node-hw}"
+test -d "$HW_REPO_PATH/.git"
+git -C "$HW_REPO_PATH" cat-file -e "$HW_SHA"
+git -C "$HW_REPO_PATH" tag --list | grep -q "^v1.0-archive$"
+```
+
+**Smoke gate (hardware repo, verifying its own content):**
+
+```bash
+test -f CLAUDE.md
+grep -q "^## ADR drafting discipline" CLAUDE.md
+grep -q "^## Tag conventions" CLAUDE.md
+git tag --list | grep -q "^v1.0-archive$"
+```
+
+#### EC-9. Phase 2 deliverable + sign-off
+
+- ADR-001 finalized (all DRAFT markers removed; renamed `ADR-001-pin-map.md`).
+- Sign-off recorded in ADR-001 footer: date + approver name (Arif).
+- **Hardware repo:** tag `adr-001-locked` created on the sign-off commit.
+- **Firmware repo:** tag `phase-2-pinmap-locked` created. `HARDWARE_REV.md` updated to pin the new `adr-001-locked` tag SHA (replacing the `v1.0-archive` pin from EC-8).
+- §6 State block in firmware repo updated with Phase 2 outcome (all attempts dated, **no squashing** — per "aesthetic vs functional preference" lesson).
+
+**Smoke gate (final, both repos):**
+
+```bash
+# Hardware repo
+test -f hardware/adr/ADR-001-pin-map.md   # not -DRAFT
+grep -qE "^Signed-off-by: Arif " hardware/adr/ADR-001-pin-map.md
+git tag --list | grep -q "^adr-001-locked$"
+
+# Firmware repo
+git tag --list | grep -q "^phase-2-pinmap-locked$"
+HW_SHA=$(awk '/^pinned_sha:/ {print $2}' HARDWARE_REV.md)
+test "$(git -C "$HW_REPO_PATH" rev-parse adr-001-locked^{commit})" = "$HW_SHA" \
+  || test "$(git -C "$HW_REPO_PATH" rev-parse adr-001-locked)" = "$HW_SHA"
+```
+
+---
+
+**Footnote 1 — OQ-7 asymmetric outcome (accepted in advance).**
+
+If the PARLIO patch's intent cannot be determined and is therefore NOT vendored:
+
+- Local builds on `siot-dev-m5` will produce `v5.5.4-dirty` (because `~/esp/esp-idf-v5.5.4/` retains the personal mod).
+- CI builds (clean clone + IAD patch only via `apply-patches.sh`) will produce clean `v5.5.4`.
+- Acceptable asymmetry. Recorded explicitly so neither operator nor reviewer is surprised.
+- Asymmetry documented in `docs/RUNBOOK.md` under "ESP-IDF local modifications (not project-bound)".
+- §3 #6 single-canonical-build-path invariant **NOT violated** — both local and CI use the same ESP-IDF version, target, and `sdkconfig.defaults`; only local has an extra incidental modification off the project's compile path.
+
+**Footnote 2 — Tag naming convention (locked rev5).**
+
+| Pattern | Repo | Use |
+|---|---|---|
+| `phase-N-<name>-<status>` | firmware repo only | Firmware phase boundaries (e.g., `phase-1-scaffold-green`, `phase-2-pinmap-locked`) |
+| `adr-NNN-locked` | hardware repo only | ADR sign-off in hardware repo (e.g., `adr-001-locked`) |
+| `schematic-vX.Y-archive` | hardware repo only | Immutable schematic version reference (e.g., `v1.0-archive`) |
+
+**Firmware phase counters do NOT cross into hardware repo tag namespace, and vice versa.** Maintains split-repo decoupling per Footnote 3.
+
+**Footnote 3 — Cross-repo coupling.**
+
+The firmware repo couples to the hardware repo only via `HARDWARE_REV.md`:
+
+```
+pinned_sha:  <40-char hex SHA>
+pinned_tag:  <tag name>
+pinned_date: <ISO 8601>
+```
+
+Firmware repo's gates verify *the coupling* (file format, SHA resolves in pinned hardware repo). Firmware repo's gates do NOT verify hardware repo content (that's the hardware repo's contract responsibility). Same principle in reverse: hardware repo doesn't verify firmware content.
+
+---
+
+**Phase 2 closure conditions.**
+
+**On PASS:**
+- ADR-001 user-signed in hardware repo
+- Tag `adr-001-locked` in hardware repo
+- Tag `phase-2-pinmap-locked` in firmware repo (annotation includes toolchain versions + full SHA-256 of any new build artefacts, no truncation per "aesthetic vs functional preference" lesson)
+- `HARDWARE_REV.md` updated to pin `adr-001-locked`
+- §6 State block updated with full Phase 2 history (all attempts, no squash)
+- `docs/RUNBOOK.md` updated with any new lessons captured during Phase 2
+- Advance to Phase 3 held pending explicit user sign-off (separate review)
+
+**On FAIL:**
+- Stop. Log to `docs/RUNBOOK.md` under "Phase 2 attempts".
+- Do not advance. **Do not flash hardware.**
+- Fix in `fix/p2-*` branch (firmware) or `fix/adr-001-*` branch (hardware).
+
+**Rollback** (per-criterion, see EC-1 for patch-script-specific rollback):
+- EC-2 schematic extraction: `git revert` schematic-import commit (hardware repo)
+- EC-3/4/5/6/7 ADR drafts: edit in place; never published until sign-off
+- EC-8 hardware repo: repo creation is one-way; tags/content can be `git reset --hard` to a prior state if needed before sign-off
+- EC-9 final tags: `git tag -d` on local, do not push deletion if a remote already saw the tag
 
 ### Phase 3 — First flash + USB-CDC console · **scoped**
 
@@ -348,6 +660,7 @@ Light-sleep between samples, task watchdog, brownout recovery, OTA-DFU (`partiti
 <!-- 2026-05-01: rev3 — pin bumps approved per environmental audit. ESP-IDF v5.3.1 → v5.5.4 (already side-installed at ~/esp/esp-idf-v5.5.4/). gitleaks v8.21.x → v8.30.x (currently v8.30.1, already installed). clang-format LLVM 18 keg-only path documented. §8 MCP Pi gateway row strike. Phase 1 execution begins. -->
 <!-- 2026-05-01: rev4 — PlatformIO dropped after Attempt 2 exposed the joint-pin inconsistency. Single canonical build path = ESP-IDF v5.5.4 via idf.py for both local and CI. §3 #6 rewritten to functional-equivalence (the byte-equivalent framing in earlier reviews was operator-introduced and not load-bearing in the contract). Guardrail #9 (gate-execution discipline) preserved. OQ-6 closed. New Pin-discipline lesson in RUNBOOK. CI matrix down to 4 jobs (no pio-build). -->
 <!-- 2026-05-01: Phase 1 SIGN-OFF received. OQ-8 closed (LoRaWAN / Class A / AS923 / OTAA → ChirpStack 10.10.8.140 / RadioLib stack confirmed; ADR-003 still formalises in Phase 5). OQ-4 stays open. Hardware repo creation + GitHub remote both deferred per user sequencing argument (hardware repo created first, tagged, then firmware HARDWARE_REV.md pinned; cf. user message 2026-05-01). Schematic CLAUDE.md regeneration deferred to Phase 2 prep (option β). Phase 2 entry-criteria draft acknowledged but not yet locked into §5; will fold in when user signals "begin Phase 2". -->
+<!-- 2026-05-01: rev5 — Phase 2 entry criteria locked (EC-1..EC-9). Renumbered per execution order (BOM consistency check now EC-3 before pin-map extraction EC-4). Five operator-facing revisions folded in vs the user's draft: (1) EC-1 verification uses fresh temp clone with trap-on-ERR forensics + cleanup-only-on-success — dev tree at ~/esp/esp-idf-v5.5.4/ never touched during verification; (2) apply-patches.sh dry-run output corrected ("Would apply" vs "Applied"); (3) apply-patches.sh adds IDF_PATH and PATCHES_DIR validity preconditions with clear errors; (4) apply-patches.sh uses BASH_SOURCE for SCRIPT_DIR resolution (symlink-safe); (5) apply-patches.sh uses LC_ALL=C sort for deterministic patch ordering across locales (load-bearing for >= 2 patches). Hardware repo gets a slim CLAUDE.md as part of EC-8 (cross-repo discipline: each repo owns its own gate). New Footnote 3 (cross-repo coupling) and Footnote 2 (tag naming convention) lock the split-repo discipline. New "aesthetic vs functional preference" lesson written to docs/RUNBOOK.md in companion commit (see git log fd36fce). -->
 
 ---
 
@@ -361,7 +674,7 @@ Light-sleep between samples, task watchdog, brownout recovery, OTA-DFU (`partiti
 | OQ-4 | AS923 sub-band for Bangladesh deployment | Phase 5 / ADR-004 | Confirm against `rnd-southerniot/siot-crm-review` ChirpStack region config. |
 | OQ-5 | Antenna option for `-9-SM-I` variant — IPEX vs onboard PCB? | Phase 2 (visual inspection) | Defer to bench-side inspection. |
 | ~~OQ-6~~ | ~~sdkconfig parity check between `idf.py` and `pio` build outputs.~~ | **CLOSED 2026-05-01** | Obsolete: PlatformIO dropped at Phase 1 Attempt 2 (rev4). With a single canonical build path, there's no second build to parity-check against. See §1 footnote ². |
-| OQ-7 | ESP-IDF local patches in `~/esp/esp-idf-v5.5.4/` (stashed during Phase 1 to ensure pristine `v5.5.4` build) — vendor properly into `firmware/esp-idf-patches/` with attribution and intent documentation. **Phase 2 entry prereq** before any code touching USB or parallel-IO peripherals. | Phase 2 / ADR-001 prereq | (a) `usb_types_ch9.h` (IAD descriptor size 9→8): likely upstream bug fix per USB 2.0 ECN — vendor as `0001-fix-iad-desc-size.patch`, file ESP-IDF GitHub issue, submit upstream PR if confirmed. (b) `esp_lcd_panel_io_parl.c` (PARLIO sample edge POS→NEG): **intent unclear — investigate before vendoring.** If real fix, vendor like (a); if hardware-specific workaround, gate behind Kconfig and document hardware case. **Do not vendor an undocumented patch.** |
+| OQ-7 | ESP-IDF local patches in `~/esp/esp-idf-v5.5.4/` (stashed during Phase 1 to ensure pristine `v5.5.4` build) — vendor properly into `firmware/esp-idf-patches/` with attribution and intent documentation. **Phase 2 entry criterion EC-1** (rev5). | Phase 2 / ADR-001 prereq · see §5 EC-1 for full disposition + verification routine | (a) `usb_types_ch9.h` (IAD descriptor size 9→8): likely upstream bug fix per USB 2.0 ECN — vendor as `0001-fix-iad-desc-size.patch`, file ESP-IDF GitHub issue, submit upstream PR if confirmed. (b) `esp_lcd_panel_io_parl.c` (PARLIO sample edge POS→NEG): **intent unclear — investigate before vendoring.** If intent cannot be determined, the patch is NOT vendored — stays in local ESP-IDF as personal modification, documented in `docs/RUNBOOK.md` under "ESP-IDF local modifications (not project-bound)". **Asymmetric outcome accepted in advance** (see §5 Footnote 1): local builds may produce `v5.5.4-dirty` while CI produces clean `v5.5.4`; both compile against the same project sdkconfig and same ESP-IDF version, so §3 #6 single-canonical-build-path invariant is not violated. |
 | ~~OQ-8~~ | ~~Schematic title says "RS485 P2P Node V1.1" — LoRa P2P or LoRaWAN?~~ | **CLOSED 2026-05-01 (Phase 1 sign-off)** | **Resolved: LoRaWAN, Class A, AS923, OTAA join to existing CRM ChirpStack at `10.10.8.140`.** Reasoning: existing Southern IoT infrastructure (deployed ChirpStack, AS923 region configured, dashboards/alerts/FUOTA pipeline standardised, OTAA + DevEUI/AppKey provisioning already in place) is the load-bearing argument; the schematic's "P2P Node" string in the title is firmware-side naming and does not constrain the radio path. OQ-3 default (RadioLib) confirmed by user at sign-off; formal close still tracks via ADR-003 in Phase 5. The "P2P" in firmware identifiers should be suppressed when Phase 5 lands. OQ-4 (AS923 sub-band selection) remains open until Phase 5 against CRM region config. |
 
 ---

@@ -1,6 +1,6 @@
 # rak3112-rs485-node — Execution Contract (firmware)
 
-> **Status:** rev5 — Phase 2 entry criteria locked 2026-05-01.
+> **Status:** rev6 — Phase 2 path conventions corrected 2026-05-01.
 > **Inherits from:** `~/.claude/CLAUDE.md` (global, M5 Pro profile).
 > **Owner:** rnd-southerniot · `arif-southern`
 > **Repo path:** `~/Developer/projects/firmware/rak3112-rs485-node/`
@@ -312,6 +312,8 @@ test -d tests/host && test -f tests/host/CMakeLists.txt   # expect: exit 0
 
 **Entry criteria.** All must hold before Phase 2 *advances* (i.e., before tag `phase-2-pinmap-locked` is created). Numbered in execution order. Each criterion has its own bare smoke gate (per Guardrail §3 #9). Cross-repo gates verify *the coupling*, not the other repo's content (per Footnote 3).
 
+> **Path conventions (rev6 clarification).** When a smoke gate is labeled "**firmware repo**", paths are relative to the firmware repo's root — e.g., `firmware/build/...`, and the snapshot-mirror tree at `hardware/schematic/v1.0/...` (the firmware-repo's mirror; see §2 layout). When labeled "**hardware repo**", paths are relative to the hardware repo's root — e.g., `schematic/v1.0/...`, `adr/...`, `photos/...`. **The hardware repo does NOT have a top-level `hardware/` directory** — that prefix only exists inside the firmware repo, where it identifies the read-only snapshot of canonical hardware content. Earlier rev5 wording inadvertently used the firmware-repo prefix in hardware-repo gate paths; rev6 corrects this.
+
 #### EC-1. OQ-7 resolved — ESP-IDF patches handled
 
 - `usb_types_ch9.h` patch: investigated, attributed (upstream PR # if exists, local origin if not), vendored to `firmware/esp-idf-patches/0001-fix-iad-desc-size.patch` with header documenting context. Applied via project-side `firmware/scripts/apply-patches.sh`.
@@ -405,20 +407,20 @@ idf.py -C firmware build
 #### EC-2. Schematic rendered, JSON-extracted, and cross-checked
 
 - PDF rendered to PNG (per-page, 300 DPI) via poppler: `pdftoppm -r 300 schematic.pdf page -png`.
-- Both PDF and PNG committed to **hardware repo** at `hardware/schematic/v1.0/`.
-- SHA-256 of PDF recorded in `hardware/schematic/v1.0/CHECKSUMS.txt` (full hashes — no truncation).
-- Pin-label extraction from `.esch` JSON files (source-of-truth) dumped to `hardware/schematic/v1.0/esch-pin-labels.json`.
+- Both PDF and PNG committed to **hardware repo** at `schematic/v1.0/`.
+- SHA-256 of PDF recorded in `schematic/v1.0/CHECKSUMS.txt` (full hashes — no truncation).
+- Pin-label extraction from `.esch` JSON files (source-of-truth) dumped to `schematic/v1.0/esch-pin-labels.json`.
 - Diff PNG-derived pin labels vs. `.esch` JSON labels. Discrepancies flagged in ADR-001. **JSON wins on conflicts** (PDF can be export-stale).
 
 **Smoke gate (hardware repo):**
 
 ```bash
-test -f hardware/schematic/v1.0/schematic.pdf
-ls hardware/schematic/v1.0/page-*.png >/dev/null   # at least one page
-test -f hardware/schematic/v1.0/esch-pin-labels.json
-test -f hardware/schematic/v1.0/CHECKSUMS.txt
-sha256sum -c hardware/schematic/v1.0/CHECKSUMS.txt
-jq empty hardware/schematic/v1.0/esch-pin-labels.json
+test -f schematic/v1.0/schematic.pdf
+ls schematic/v1.0/page-*.png >/dev/null   # at least one page
+test -f schematic/v1.0/esch-pin-labels.json
+test -f schematic/v1.0/CHECKSUMS.txt
+sha256sum -c schematic/v1.0/CHECKSUMS.txt
+jq empty schematic/v1.0/esch-pin-labels.json
 ```
 
 #### EC-3. Schematic ↔ BOM consistency check (severity-gated)
@@ -439,14 +441,14 @@ jq empty hardware/schematic/v1.0/esch-pin-labels.json
 **Smoke gate (hardware repo):**
 
 ```bash
-test -f hardware/adr/ADR-001-pin-map-DRAFT.md
-grep -q "^## Schematic-BOM consistency" hardware/adr/ADR-001-pin-map-DRAFT.md
-grep -qE "^MAJOR mismatches: 0$" hardware/adr/ADR-001-pin-map-DRAFT.md
+test -f adr/ADR-001-pin-map-DRAFT.md
+grep -q "^## Schematic-BOM consistency" adr/ADR-001-pin-map-DRAFT.md
+grep -qE "^MAJOR mismatches: 0$" adr/ADR-001-pin-map-DRAFT.md
 ```
 
 #### EC-4. Pin-map raw extraction
 
-- Every ESP32-S3 GPIO referenced in the schematic extracted into `hardware/adr/ADR-001-pin-map-DRAFT.md` (in the hardware repo, per EC-8).
+- Every ESP32-S3 GPIO referenced in the schematic extracted into `adr/ADR-001-pin-map-DRAFT.md` (in the hardware repo, per EC-8).
 - Format: table with columns `Pin # | GPIO | Schematic net name | Connected to | Strap pin? | Boot-state requirement | Notes`.
 - Source: `.esch` JSON (preferred) with PNG visual confirmation.
 - No firmware code references this draft yet — research artifact only.
@@ -454,9 +456,9 @@ grep -qE "^MAJOR mismatches: 0$" hardware/adr/ADR-001-pin-map-DRAFT.md
 **Smoke gate (hardware repo):**
 
 ```bash
-test -f hardware/adr/ADR-001-pin-map-DRAFT.md
-grep -q "^| Pin # | GPIO | Schematic net" hardware/adr/ADR-001-pin-map-DRAFT.md
-test "$(grep -cE '^\| [0-9]+ \| GPIO' hardware/adr/ADR-001-pin-map-DRAFT.md)" -gt 0
+test -f adr/ADR-001-pin-map-DRAFT.md
+grep -q "^| Pin # | GPIO | Schematic net" adr/ADR-001-pin-map-DRAFT.md
+test "$(grep -cE '^\| [0-9]+ \| GPIO' adr/ADR-001-pin-map-DRAFT.md)" -gt 0
 ```
 
 #### EC-5. OQ-1 resolved — RS-232 disposition + H1 purpose closure
@@ -467,8 +469,8 @@ test "$(grep -cE '^\| [0-9]+ \| GPIO' hardware/adr/ADR-001-pin-map-DRAFT.md)" -g
 **Smoke gate (hardware repo):**
 
 ```bash
-grep -q "^## OQ-1: RS-232 disposition" hardware/adr/ADR-001-pin-map-DRAFT.md
-grep -q "^## H1 header purpose" hardware/adr/ADR-001-pin-map-DRAFT.md
+grep -q "^## OQ-1: RS-232 disposition" adr/ADR-001-pin-map-DRAFT.md
+grep -q "^## H1 header purpose" adr/ADR-001-pin-map-DRAFT.md
 ```
 
 #### EC-6. OQ-2 resolved — PSRAM mode
@@ -487,22 +489,22 @@ grep -q "^## H1 header purpose" hardware/adr/ADR-001-pin-map-DRAFT.md
 grep -E "^CONFIG_SPIRAM_MODE_(OCT|QUAD)=y$" firmware/sdkconfig.defaults
 . ~/esp/esp-idf-v5.5.4/export.sh
 idf.py -C firmware build
-grep -q "^## OQ-2: PSRAM mode" hardware/adr/ADR-001-pin-map-DRAFT.md
-grep -q "^### Expected boot-log signature" hardware/adr/ADR-001-pin-map-DRAFT.md
+grep -q "^## OQ-2: PSRAM mode" adr/ADR-001-pin-map-DRAFT.md
+grep -q "^### Expected boot-log signature" adr/ADR-001-pin-map-DRAFT.md
 ```
 
 #### EC-7. OQ-5 resolved — antenna variant
 
 - Visual inspection of physical RAK3112 module on bench.
 - Variant determined: IPEX MHF4 connector / onboard PCB RF pads / RF-pad variant per `-9-SM-I` decoding.
-- Documented in ADR-001 with photograph in `hardware/photos/module-antenna-2026-MM-DD.jpg` (in hardware repo).
+- Documented in ADR-001 with photograph in `photos/module-antenna-2026-MM-DD.jpg` (in hardware repo).
 - Phase 5 LoRa antenna routing implications flagged in ADR-001.
 
 **Smoke gate (hardware repo):**
 
 ```bash
-ls hardware/photos/module-antenna-*.jpg >/dev/null
-grep -q "^## OQ-5: antenna variant" hardware/adr/ADR-001-pin-map-DRAFT.md
+ls photos/module-antenna-*.jpg >/dev/null
+grep -q "^## OQ-5: antenna variant" adr/ADR-001-pin-map-DRAFT.md
 ```
 
 #### EC-8. Hardware repo created (with slim CLAUDE.md)
@@ -555,8 +557,8 @@ git tag --list | grep -q "^v1.0-archive$"
 
 ```bash
 # Hardware repo
-test -f hardware/adr/ADR-001-pin-map.md   # not -DRAFT
-grep -qE "^Signed-off-by: Arif " hardware/adr/ADR-001-pin-map.md
+test -f adr/ADR-001-pin-map.md   # not -DRAFT
+grep -qE "^Signed-off-by: Arif " adr/ADR-001-pin-map.md
 git tag --list | grep -q "^adr-001-locked$"
 
 # Firmware repo
@@ -661,6 +663,7 @@ Light-sleep between samples, task watchdog, brownout recovery, OTA-DFU (`partiti
 <!-- 2026-05-01: rev4 — PlatformIO dropped after Attempt 2 exposed the joint-pin inconsistency. Single canonical build path = ESP-IDF v5.5.4 via idf.py for both local and CI. §3 #6 rewritten to functional-equivalence (the byte-equivalent framing in earlier reviews was operator-introduced and not load-bearing in the contract). Guardrail #9 (gate-execution discipline) preserved. OQ-6 closed. New Pin-discipline lesson in RUNBOOK. CI matrix down to 4 jobs (no pio-build). -->
 <!-- 2026-05-01: Phase 1 SIGN-OFF received. OQ-8 closed (LoRaWAN / Class A / AS923 / OTAA → ChirpStack 10.10.8.140 / RadioLib stack confirmed; ADR-003 still formalises in Phase 5). OQ-4 stays open. Hardware repo creation + GitHub remote both deferred per user sequencing argument (hardware repo created first, tagged, then firmware HARDWARE_REV.md pinned; cf. user message 2026-05-01). Schematic CLAUDE.md regeneration deferred to Phase 2 prep (option β). Phase 2 entry-criteria draft acknowledged but not yet locked into §5; will fold in when user signals "begin Phase 2". -->
 <!-- 2026-05-01: rev5 — Phase 2 entry criteria locked (EC-1..EC-9). Renumbered per execution order (BOM consistency check now EC-3 before pin-map extraction EC-4). Five operator-facing revisions folded in vs the user's draft: (1) EC-1 verification uses fresh temp clone with trap-on-ERR forensics + cleanup-only-on-success — dev tree at ~/esp/esp-idf-v5.5.4/ never touched during verification; (2) apply-patches.sh dry-run output corrected ("Would apply" vs "Applied"); (3) apply-patches.sh adds IDF_PATH and PATCHES_DIR validity preconditions with clear errors; (4) apply-patches.sh uses BASH_SOURCE for SCRIPT_DIR resolution (symlink-safe); (5) apply-patches.sh uses LC_ALL=C sort for deterministic patch ordering across locales (load-bearing for >= 2 patches). Hardware repo gets a slim CLAUDE.md as part of EC-8 (cross-repo discipline: each repo owns its own gate). New Footnote 3 (cross-repo coupling) and Footnote 2 (tag naming convention) lock the split-repo discipline. New "aesthetic vs functional preference" lesson written to docs/RUNBOOK.md in companion commit (see git log fd36fce). -->
+<!-- 2026-05-01: rev6 — path-conventions correction. EC-2..EC-9 "Smoke gate (hardware repo):" code blocks and body content references had the firmware-repo's `hardware/` prefix carried over inadvertently when paths were transcribed into hardware-repo gates. Hardware repo's actual layout is `schematic/`, `adr/`, `photos/` at root (no `hardware/` prefix); the prefix only exists inside the firmware repo where it identifies the canonical-content snapshot mirror. Rev6 drops the prefix from all hardware-repo gate paths and adds an explicit "Path conventions" preamble at the top of §5 Phase 2's Entry criteria block. EC-8a (local hw repo init at ~/Developer/projects/pcb-design/rak3112-rs485-node-hw/, commit f82702d) was already structured per the rev6 layout; rev6 makes the contract match what rev5's spec actually implied. Authored under operator delegation per the chat-side-author pattern (rev6 "I author" mirroring rev5 "you author"). Subsequent rev6 contract changes default back to operator authorship unless explicitly delegated. -->
 
 ---
 

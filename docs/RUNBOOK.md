@@ -2,6 +2,60 @@
 
 Operational log for `rak3112-rs485-node` firmware. Append-only.
 
+## Phase 2 attempts
+
+### EC-1 — 2026-05-01 — PASS (vendored IAD only; PARLIO held back)
+
+**Patch dispositions per rev5 §5 EC-1:**
+
+| Patch | Disposition | Rationale |
+|---|---|---|
+| `usb_types_ch9.h` (`USB_IAD_DESC_SIZE` 9 → 8) | **Vendored** as `firmware/esp-idf-patches/0001-fix-iad-desc-size.patch` | Verifiable correct against USB 2.0 ECN "Interface Association Descriptors" (May 2003). v5.5.4 + release/v5.5 branch tip both ship `9`; ESP-IDF master has refactored away from this path so the bug is implicitly fixed there. No upstream PR exists. |
+| `esp_lcd_panel_io_parl.c` (`sample_edge` POS → NEG) | **Not vendored.** Stays in `~/esp/esp-idf-v5.5.4/` as personal modification | Author intent could not be recovered (neither chat-side nor user-side instance has access to the operator's keystroke memory; no commit on the local IDF tree captures the rationale). Per rev5 EC-1: "If intent cannot be determined, the patch is NOT vendored." Plausibility of the change does not satisfy the rule. |
+
+**Plausible-but-undocumented theory for the PARLIO mod (recorded as theory, not as confirmed reason):**
+
+- v5.5.4 default: `.sample_edge = PARLIO_SAMPLE_EDGE_POS`
+- ESP-IDF master: field renamed to `shift_edge` with `PARLIO_SHIFT_EDGE_NEG` as the default
+- The local mod's POS → NEG flip aligns with master's default behaviour
+- This *suggests* the mod was a real fix, but the contract requires documented author intent — alignment with master is post-hoc reasoning, not provenance
+
+**Asymmetric outcome accepted (Footnote 1):**
+
+- Local builds on `siot-dev-m5` will produce `v5.5.4-dirty` (PARLIO mod still present in `~/esp/esp-idf-v5.5.4/` working tree, off-compile-path for this firmware).
+- CI builds (clean clone + `apply-patches.sh`) will produce clean `v5.5.4` with IAD patch applied.
+- §3 #6 single-canonical-build-path invariant **NOT violated**: same ESP-IDF version, same target, same `sdkconfig.defaults`, only an extra incidental working-tree mod on local that doesn't affect the heartbeat compile path.
+
+**EC-1 fresh-clone verification (per the rev5 verification routine):**
+
+| Step | Result |
+|---|---|
+| `git clone --depth 1 --branch v5.5.4 espressif/esp-idf` | OK |
+| `git submodule update --init --recursive --depth 1` | OK |
+| Pre-patch sanity grep | `#define USB_IAD_DESC_SIZE    9` ← upstream wrong |
+| `apply-patches.sh` (IDF_PATH = temp clone) | `Applied: 0001-fix-iad-desc-size.patch` |
+| Post-patch sanity grep | `#define USB_IAD_DESC_SIZE    8` ← corrected |
+| `idf.py build` (output to `firmware/build-verify/`) | `Project build complete.` |
+| Cleanup of temp ESP-IDF clone + `build-verify/` | OK |
+| Phase 1 baseline `firmware/build/` | preserved untouched |
+
+**Build-timestamp finding (worth flagging in advance for Phase 5+):**
+
+- Phase 1 baseline binary SHA-256: `a2f3d6044f9458aa38a492cad531c53071b2f829a33f5fd2635db72271fe5116` (built against pristine v5.5.4, no IAD patch)
+- Phase 2 EC-1 verification binary SHA-256: `d47500e3906766219cd466a475d85f18bdd6fd056386cfa3a4e568d35cb4b7a7` (built against pristine v5.5.4 + IAD patch)
+- The SHAs differ even though the IAD constant is off-compile-path for the heartbeat (no USB host stack, no `usb_iad_desc_t` instantiation, no `static_assert` activation).
+- Cause: ESP-IDF embeds build timestamps + source-path strings in the app descriptor and debug info. Without `CONFIG_APP_REPRODUCIBLE_BUILD=y` enabled, every rebuild has a different timestamp by design.
+- **Implication for §3 #6 reproducibility guarantee:** the contract wording "functionally identical (modulo embedded timestamp / git-describe strings)" is exactly on point — timestamp is the `modulo`. SHA inequality between rebuilds at different wall-clock times is expected and does not violate the invariant.
+- **Phase 5+ consideration:** if byte-identical builds become valuable (e.g., for over-the-air update integrity, or for reproducible-build CI verification), enable `CONFIG_APP_REPRODUCIBLE_BUILD=y` then. Not enabling now keeps timestamps useful for forensic correlation.
+
+**Deferred task — file upstream PR for IAD fix.**
+
+The `0001-fix-iad-desc-size.patch` is a verifiable bug fix in ESP-IDF's `release/v5.5` branch. Worth filing upstream as a PR against `espressif/esp-idf`'s `release/v5.5` branch. Not blocking for Phase 2 / hardware-side work. Logged here; will be moved into `ADR-001-pin-map.md` appendix when that doc exists, or stay here as a "deferred upstream contributions" entry.
+
+Suggested PR title: `fix(usb): USB_IAD_DESC_SIZE is 8 bytes per USB 2.0 ECN, not 9 (release/v5.5)`
+
+---
+
 ## Phase 1 attempts
 
 ### Attempt 2 — 2026-05-01 — FAIL on smoke-gate step 3 (PlatformIO + ESP-IDF version mismatch)
@@ -179,3 +233,67 @@ Aesthetic preferences for "clean" or "minimal" should not override functional re
 - **Throughout Phase 1 reports (SHA truncation).** Chat-side Claude truncated `a2f3d6044f9458aa38a492cad531c53071b2f829a33f5fd2635db72271fe5116` to `a2f3d604…fe5116` in chat reports "for readability". Caught at near-miss stage — the tag annotation itself had the full hash; only the chat summary was truncated. Aesthetic argument: "shorter is more readable". Functional cost: forensic forward-compatibility (verifying a tag's annotated SHA against the actual binary requires the full hash).
 
 **Promotion candidate.** Like the "single canonical source" lesson, this rule generalises beyond build systems: it applies to any review surface where "tidy" competes with "explicit". Worth promoting from project-RUNBOOK to global CLAUDE.md when the operator next does a global doc-discipline pass. Not actioning the global edit unilaterally — same standing rule as the Phase 1 lesson promotions.
+
+---
+
+## Silicon-vendor abstraction layer (2026-05-01, lesson from Phase 2 EC-6)
+
+**When the two-sources rule comes back silent on a hardware spec, check the silicon vendor's part-number nomenclature / comparison table before deferring.**
+
+Module manufacturers (RAK, Seeed, Adafruit, etc.) frequently underdocument the underlying silicon variant — they specify "8 MB PSRAM" without distinguishing Quad/Octal mode, "ESP32-S3" without enumerating which R-variant. But the silicon vendor (Espressif, Nordic, ST, etc.) enumerates *all* SKUs definitively in their family-level datasheets. **The authoritative source for "what's inside this module" is often one layer of abstraction below the module datasheet.**
+
+❌ **Anti-example.** Phase 2 EC-6 ran the prescribed two-sources-rule:
+
+- RAK3112 datasheet (RAKwireless): "8 MB PSRAM" with no mode disclosure
+- `rnd-southerniot/rak3112-dynamic-sensor` (operator's parallel project): `# CONFIG_SPIRAM is not set` (PSRAM disabled, mode never determined)
+
+Both sources silent. The chat-side disposition leaned toward **option C (defer with rev8 amendment)** because "two sources beat one, and two sources unable to confirm = defer." This was wrong — the search hadn't gone deep enough.
+
+✅ **Correct resolution.** Operator went one layer down to the **silicon-vendor datasheet**:
+
+> *Espressif ESP32-S3 Series Datasheet v2.2, §1.2 (Comparison), Table 1-1 (page 13). All 8 MB PSRAM ESP32-S3 variants ship Octal SPI: ESP32-S3R8 (3.3 V, current production) and ESP32-S3R8V (1.8 V, EOL). No 8 MB Quad SKU exists. RAK3112 with "8 MB PSRAM" silicon must be ESP32-S3R8 (current) or ESP32-S3R8V (legacy stock). Either way, mode = Octal.*
+
+The silicon vendor's SKU enumeration eliminated the ambiguity that the module-vendor datasheet preserved. Two RAKwireless-side sources (datasheet + RAK's own reference firmware) couldn't disambiguate. One Espressif-side source did.
+
+✅ **Generalised rule for review surfaces.** When a hardware spec is missing from module-vendor sources:
+
+1. **Identify the silicon underneath** (chip-level: ESP32-S3; module-level: RAK3112 above it).
+2. **Check the silicon-vendor's family datasheet** — specifically the part-number-nomenclature / SKU-comparison table. These tables enumerate every variant the vendor sells.
+3. **Map the module's published spec** ("8 MB PSRAM") **to the silicon SKU** (ESP32-S3R8 / ESP32-S3R8V — both Octal). If the spec uniquely identifies the silicon, the silicon's properties resolve the question.
+4. **If still ambiguous** (e.g., spec matches multiple silicon SKUs that differ on the relevant axis), then defer / reach out to the module vendor.
+
+Module vendors abstract over silicon vendors. When the abstraction layer is opaque on a technical detail, lift it. The silicon vendor's documentation is one layer down but often more comprehensive on technical detail than the module-level layer.
+
+**Reference incident:** Phase 2 EC-6, 2026-05-01. Resolution: PSRAM mode = Octal SPI per ESP32-S3 Series Datasheet v2.2 Table 1-1. Disposition A accepted, no rev8 amendment needed.
+
+**Cross-project applicability.** `rnd-southerniot/rak3112-dynamic-sensor` should also enable Octal PSRAM when its use case requires PSRAM. Same silicon, same answer. Documented here as a shared lesson; that project's CLAUDE.md / sdkconfig update is out of scope for this repo's commits but tracked as a deferred cross-project note.
+
+**Promotion candidate** for global CLAUDE.md when the operator next does a global doc-discipline pass.
+
+---
+
+## Pre-commit hook side-effects on checksums (2026-05-02, lesson from Phase 2 EC-9 pre-flight)
+
+**When a pre-commit hook modifies a file, any checksums computed *before* the hook run are stale.** The committed checksum file ends up referencing the pre-hook bytes; the on-disk file has post-hook bytes; `sha256sum -c CHECKSUMS.txt` fails until someone re-runs the gate.
+
+❌ **Anti-example (hw repo, Phase 2 EC-2 commit `970cdf0`).** Sequence:
+
+1. `shasum -a 256 *.pdf *.epro *.json page-*.png > CHECKSUMS.txt` — captures pre-hook hashes.
+2. `git add -A`.
+3. `pre-commit run --all-files` → end-of-file-fixer modifies `esch-pin-labels.json` (adds trailing newline).
+4. `git add -A` (re-stages the modified JSON; CHECKSUMS.txt unchanged).
+5. `git commit` → CHECKSUMS.txt records pre-fixer JSON hash; JSON file has post-fixer bytes.
+
+The EC-2 smoke gate (`sha256sum -c CHECKSUMS.txt`) appeared to pass at commit time because pre-commit ran on a self-consistent staged tree. But the **committed** CHECKSUMS.txt was computed before the eof-fixer modification; the **committed** JSON was modified by the eof-fixer afterwards. Mismatch ran silently from EC-2 (2026-05-01) through EC-7 close (2026-05-02). Detected at Phase 2 EC-9 pre-flight when SHA-256s were re-computed for the `adr-001-locked` tag annotation; fixed by regenerating CHECKSUMS.txt against the post-hook tree and bundling the fix into the sign-off commit.
+
+✅ **Generalised rule.** When a checksum file is committed alongside the files it references, the checksum **must** be computed *after* the pre-commit hook chain has stabilised. Three viable patterns:
+
+- (a) **Manual sequence:** run `pre-commit run --all-files` first, let hooks modify whatever they will, *then* compute checksums on the post-hook tree.
+- (b) **CHECKSUMS regeneration as a pre-commit hook:** add a hook that runs after the file-modifying hooks (eof-fixer, trailing-whitespace, formatters) and rewrites CHECKSUMS.txt from the post-hook tree.
+- (c) **Self-verification hook:** add a hook that fails the commit if `sha256sum -c CHECKSUMS.txt` doesn't match the staged tree. Forces the operator to regenerate before commit.
+
+For this project, pattern (a) is sufficient at the current scale. Future Phase 3+ work that adds host tests with binary fixtures may benefit from (b) or (c) if checksum drift becomes a recurring failure mode.
+
+**Reference incident:** EC-2 (2026-05-01) committed stale CHECKSUMS.txt for `esch-pin-labels.json`. Detected at EC-9 pre-flight (2026-05-02). No data corruption, no contract violation rolled forward downstream — but the EC-2 gate was technically failing during EC-3..EC-7. Worth a small audit of the EC-3..EC-7 commits if any depended on `sha256sum -c` passing.
+
+**Promotion candidate** for global CLAUDE.md (joining the four prior lessons — five total now).

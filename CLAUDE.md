@@ -131,6 +131,8 @@ rak3112-rs485-node/                       # firmware repo
 
 8. **RS-485 termination & bias.** 120 Ω termination + fail-safe bias resistor values to be confirmed against TP8485E datasheet and bus topology in Phase 4 ADR.
 
+9. **Gate-execution discipline.** Smoke-gate commands MUST be executed *bare* — no `| tee`, `| tail`, `| head`, `| grep`, `| awk`, `| sed`, or similar pipes added at runtime. Pipes mask the upstream exit code (the pipe's exit is the *last* command's exit unless `set -o pipefail` is in force). The gate is the exit code; the operator (human or AI) does not get to wrap it. If forensic logging is needed, capture it **outside** the gate via the on-failure procedure in `docs/RUNBOOK.md` — not inline. Reference incident: Phase 1 Attempt 1 (2026-05-01) — `pio run` failure was masked by an operator-added `| tee /tmp/… | tail -3` even though the contract command was clean. See `docs/RUNBOOK.md` "Gate design principles".
+
 ---
 
 ## 4. Branches, commits, CI

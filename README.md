@@ -3,7 +3,8 @@
 Industrial RS-485 ⇄ LoRaWAN AS923 sensor/gateway node.
 
 - **Module:** RAK3112-9-SM-I (RAKwireless WisDuo, ESP32-S3 + Semtech SX1262)
-- **Status:** Phase 1 scaffold (see [`CLAUDE.md`](./CLAUDE.md))
+- **Status:** Phase 1 scaffold rev4 (see [`CLAUDE.md`](./CLAUDE.md))
+- **Build path:** ESP-IDF v5.5.4 via `idf.py` (single canonical path; PlatformIO dropped at Phase 1 Attempt 2 — see CLAUDE.md §1 footnote ²)
 - **Owner:** rnd-southerniot
 
 ## Quick start

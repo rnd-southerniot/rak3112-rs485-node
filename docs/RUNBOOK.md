@@ -233,3 +233,39 @@ Aesthetic preferences for "clean" or "minimal" should not override functional re
 - **Throughout Phase 1 reports (SHA truncation).** Chat-side Claude truncated `a2f3d6044f9458aa38a492cad531c53071b2f829a33f5fd2635db72271fe5116` to `a2f3d604…fe5116` in chat reports "for readability". Caught at near-miss stage — the tag annotation itself had the full hash; only the chat summary was truncated. Aesthetic argument: "shorter is more readable". Functional cost: forensic forward-compatibility (verifying a tag's annotated SHA against the actual binary requires the full hash).
 
 **Promotion candidate.** Like the "single canonical source" lesson, this rule generalises beyond build systems: it applies to any review surface where "tidy" competes with "explicit". Worth promoting from project-RUNBOOK to global CLAUDE.md when the operator next does a global doc-discipline pass. Not actioning the global edit unilaterally — same standing rule as the Phase 1 lesson promotions.
+
+---
+
+## Silicon-vendor abstraction layer (2026-05-01, lesson from Phase 2 EC-6)
+
+**When the two-sources rule comes back silent on a hardware spec, check the silicon vendor's part-number nomenclature / comparison table before deferring.**
+
+Module manufacturers (RAK, Seeed, Adafruit, etc.) frequently underdocument the underlying silicon variant — they specify "8 MB PSRAM" without distinguishing Quad/Octal mode, "ESP32-S3" without enumerating which R-variant. But the silicon vendor (Espressif, Nordic, ST, etc.) enumerates *all* SKUs definitively in their family-level datasheets. **The authoritative source for "what's inside this module" is often one layer of abstraction below the module datasheet.**
+
+❌ **Anti-example.** Phase 2 EC-6 ran the prescribed two-sources-rule:
+
+- RAK3112 datasheet (RAKwireless): "8 MB PSRAM" with no mode disclosure
+- `rnd-southerniot/rak3112-dynamic-sensor` (operator's parallel project): `# CONFIG_SPIRAM is not set` (PSRAM disabled, mode never determined)
+
+Both sources silent. The chat-side disposition leaned toward **option C (defer with rev8 amendment)** because "two sources beat one, and two sources unable to confirm = defer." This was wrong — the search hadn't gone deep enough.
+
+✅ **Correct resolution.** Operator went one layer down to the **silicon-vendor datasheet**:
+
+> *Espressif ESP32-S3 Series Datasheet v2.2, §1.2 (Comparison), Table 1-1 (page 13). All 8 MB PSRAM ESP32-S3 variants ship Octal SPI: ESP32-S3R8 (3.3 V, current production) and ESP32-S3R8V (1.8 V, EOL). No 8 MB Quad SKU exists. RAK3112 with "8 MB PSRAM" silicon must be ESP32-S3R8 (current) or ESP32-S3R8V (legacy stock). Either way, mode = Octal.*
+
+The silicon vendor's SKU enumeration eliminated the ambiguity that the module-vendor datasheet preserved. Two RAKwireless-side sources (datasheet + RAK's own reference firmware) couldn't disambiguate. One Espressif-side source did.
+
+✅ **Generalised rule for review surfaces.** When a hardware spec is missing from module-vendor sources:
+
+1. **Identify the silicon underneath** (chip-level: ESP32-S3; module-level: RAK3112 above it).
+2. **Check the silicon-vendor's family datasheet** — specifically the part-number-nomenclature / SKU-comparison table. These tables enumerate every variant the vendor sells.
+3. **Map the module's published spec** ("8 MB PSRAM") **to the silicon SKU** (ESP32-S3R8 / ESP32-S3R8V — both Octal). If the spec uniquely identifies the silicon, the silicon's properties resolve the question.
+4. **If still ambiguous** (e.g., spec matches multiple silicon SKUs that differ on the relevant axis), then defer / reach out to the module vendor.
+
+Module vendors abstract over silicon vendors. When the abstraction layer is opaque on a technical detail, lift it. The silicon vendor's documentation is one layer down but often more comprehensive on technical detail than the module-level layer.
+
+**Reference incident:** Phase 2 EC-6, 2026-05-01. Resolution: PSRAM mode = Octal SPI per ESP32-S3 Series Datasheet v2.2 Table 1-1. Disposition A accepted, no rev8 amendment needed.
+
+**Cross-project applicability.** `rnd-southerniot/rak3112-dynamic-sensor` should also enable Octal PSRAM when its use case requires PSRAM. Same silicon, same answer. Documented here as a shared lesson; that project's CLAUDE.md / sdkconfig update is out of scope for this repo's commits but tracked as a deferred cross-project note.
+
+**Promotion candidate** for global CLAUDE.md when the operator next does a global doc-discipline pass.

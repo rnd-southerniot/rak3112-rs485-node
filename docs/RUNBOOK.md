@@ -127,3 +127,34 @@ When a gate fails:
 3. Optionally promote the full log into `docs/logs/` if the failure mode is novel and worth durable retention.
 
 This is the *only* place where pipes are sanctioned, and only after the gate has already failed.
+
+---
+
+## Pin discipline (2026-05-01, lesson from Phase 1 Attempt 2)
+
+**When pinning two toolchains that must agree on a downstream property** (version, CMake floor, compiler version, std lib), **the pins are not independent.** Verify the agreement at pin time, not at build time.
+
+❌ **Anti-example.** Rev3 of this contract pinned:
+
+```
+ESP-IDF                         v5.5.4
+PlatformIO platform-espressif32 ~6.7.0    # bundles ESP-IDF v5.2.1 + CMake 3.16
+```
+
+Each pin was locally valid (real, released versions). They were **jointly inconsistent**: ESP-IDF v5.5 raised the CMake floor to 3.20, but PlatformIO's bundled CMake was 3.16. The mismatch was invisible until the second build path actually ran. Phase 1 Attempt 2 surfaced it; Attempt 1 only avoided it because PIO failed earlier on `src_dir`.
+
+✅ **Rule.** Any time a contract pins two tools that share a transitive dependency, **document the shared dep explicitly** and **verify agreement at the pin-introduction commit**, not at first build. Concretely, the rev3 review should have included a step like:
+
+```bash
+# Cross-pin sanity: do both build paths agree on CMake floor?
+grep cmake_minimum_required firmware/CMakeLists.txt
+# -> 3.20 (because ESP-IDF v5.5)
+# Does platform-espressif32 ~6.7.0 ship CMake >= 3.20?
+# -> No. ~6.7.0 ships v5.2.1 + CMake 3.16. Pin REJECTED.
+```
+
+The rule generalises beyond ESP-IDF/PlatformIO. It applies to: Python + pip-tools, Node + pnpm, Docker base images + bundled language runtimes, Yocto + meta-layers, anything where two pins resolve a shared transitive dependency.
+
+**Reference incident:** Phase 1 Attempt 2, 2026-05-01. Resolution: PlatformIO dropped entirely (rev4); single canonical build path = ESP-IDF.
+
+**Self-critique recorded for the next review:** the chat-side Claude that approved rev2/rev3 toolchain pins checked each pin individually, not jointly. Same blind spot the operator (Arif) flagged on themselves. Codified here so the next review surface adopts the joint-consistency check.

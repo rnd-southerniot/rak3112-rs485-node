@@ -1,6 +1,6 @@
 # rak3112-rs485-node — Execution Contract (firmware)
 
-> **Status:** rev3 — Phase 1 execution begins 2026-05-01.
+> **Status:** rev4 — Phase 1 Attempt 3 (post-PIO-drop). 2026-05-01.
 > **Inherits from:** `~/.claude/CLAUDE.md` (global, M5 Pro profile).
 > **Owner:** rnd-southerniot · `arif-southern`
 > **Repo path:** `~/Developer/projects/firmware/rak3112-rs485-node/`
@@ -44,8 +44,7 @@
 
 | Concern | Choice | Pinned version |
 |---|---|---|
-| Canonical build | ESP-IDF (CMake/Ninja via `idf.py`) | **v5.5.4** (exact patch tag — see footnote ¹) |
-| CI build | PlatformIO `framework = espidf` over the same source tree | **core ≥ 6.1.13** (currently 6.1.19) + `platform = espressif32 @ ~6.7.0` (in `platformio.ini`) |
+| **Single canonical build path** | ESP-IDF (CMake/Ninja via `idf.py`) — local **and** CI | **v5.5.4** (exact patch tag — see footnote ¹) |
 | Target | `esp32s3` |
 | Console | USB-CDC native (no external USB-UART bridge for prototype) |
 | Flashing | `idf.py flash` over USB-CDC; `esptool.py` for recovery; `esptool erase_flash` **gated** (see §3) |
@@ -59,8 +58,10 @@ Floating `latest` is forbidden under global §13. CI workflow must reference eac
 
 > ¹ ESP-IDF directory `~/esp/esp-idf-v5.5.4/` is pinned to tag `v5.5.4`. Do **not** `git pull` it without first bumping this contract pin and re-running the Phase 1 entry-criteria block. The dev branch at `~/esp/esp-idf/` (currently `v6.1-dev-3824-g484e56869c`) is unrelated to this project and must not be sourced for `rak3112-rs485-node` builds.
 
+> ² **PlatformIO was considered and dropped at Phase 1 Attempt 2 (2026-05-01).** The original rev3 dual-build-path plan paired ESP-IDF v5.5.4 with `platform = espressif32 @ ~6.7.0`, which silently bundles ESP-IDF v5.2.1 + CMake 3.16.4. ESP-IDF v5.5 raised the CMake floor to 3.20, so the second build path could not satisfy the project's `cmake_minimum_required`. After honest examination, the case for keeping PlatformIO at all turned out to be weak: hermetic CI is covered by `espressif/esp-idf-ci-action@v1`; component pinning by `idf_component.yml`; VS Code workflow by Espressif's first-party extension; "belt-and-suspenders" only catches drift if the two paths share a toolchain version, which they didn't. Single canonical build path is the more honest and lower-maintenance choice. Reconsider only via ADR if a future need surfaces. See `docs/RUNBOOK.md` Attempt 2 entry and "Pin discipline" lesson.
+
 Environment assumed (from global `~/.claude/CLAUDE.md` §5–6):
-ESP-IDF sourced explicitly via `. ~/esp/esp-idf-v5.5.4/export.sh` (do **not** use the `get_idf` alias if it points at `~/esp/esp-idf`); PlatformIO via `pipx`; macOS arm64 / Homebrew `/opt/homebrew`.
+ESP-IDF sourced explicitly via `. ~/esp/esp-idf-v5.5.4/export.sh` (do **not** use the `get_idf` alias if it points at `~/esp/esp-idf`); macOS arm64 / Homebrew `/opt/homebrew`.
 
 ---
 
@@ -125,7 +126,7 @@ rak3112-rs485-node/                       # firmware repo
 
 5. **No `:latest` Docker tags, no `curl | bash` installs, no Node.js in the firmware path** (per global §13).
 
-6. **Dual-build invariant.** Every firmware commit must build under **both** `idf.py build` and `pio run`. CI enforces by running both. Phase 1 verifies *only* "both build green"; an *output-parity* check (key sdkconfig flags compared between build artefacts) is deferred to Phase 4 (OQ-6).
+6. **Single canonical build path.** ESP-IDF v5.5.4 via `idf.py` is the only supported build path. Local development and CI use the same ESP-IDF version, same target (`esp32s3`), same `sdkconfig.defaults`. **Reproducibility guarantee:** a clean clone of `~/esp/esp-idf-v5.5.4` at tag `v5.5.4` plus a clean clone of this repo at any `phase-N-green` tag produces *functionally identical* `firmware.bin` (modulo embedded timestamp / `git describe` strings). No second framework — no PlatformIO, no Arduino-ESP32 BSP. If a contributor wants a different framework, the burden of proof is on them to show via ADR that the value justifies the maintenance cost of a dual path. (Rationale: see §1 footnote ², `docs/RUNBOOK.md` Attempt 2, and "Pin discipline" lesson.)
 
 7. **Power sequencing on bench.** USB-CDC powers logic; do **not** simultaneously connect DC barrel jack `DC1` and bench supply on `P1` without verifying RT6160 input isolation. Bench checklist in `RUNBOOK.md` (Phase 3).
 
@@ -144,13 +145,12 @@ rak3112-rs485-node/                       # firmware repo
 
   P1-01. First green dual-build for esp32s3.
   ```
-- Pre-commit (local, before push): gitleaks · clang-format · end-of-file-fixer · trailing-whitespace.
-- CI matrix (`.github/workflows/ci.yml`), all version-pinned per §1:
+- Pre-commit (local, before push): gitleaks · clang-format · end-of-file-fixer · trailing-whitespace · check-yaml · check-merge-conflict.
+- CI matrix (`.github/workflows/ci.yml`), 4 jobs, all version-pinned per §1:
   - `pre-commit` — `pre-commit run --all-files`
   - `idf-build` — ESP-IDF **v5.5.4**, `idf.py build`, artifact = `build/*.bin`
-  - `pio-build` — PlatformIO core ≥ 6.1.13 + platform-espressif32 ~6.7.0, `pio run -e esp32-s3-devkitc-1`
   - `gitleaks` — `gitleaks detect --no-banner --redact` (defence-in-depth even though pre-commit also runs it)
-  - `host-tests` — `cmake -S tests/host -B build/host && ctest --test-dir build/host` (activated when first real test lands; no-op presence-check in Phase 1)
+  - `host-tests` — layout presence-check now; real `ctest` activation lands in Phase 4
 - Green CI is a merge gate to `main`. No exceptions.
 
 ---
@@ -165,15 +165,14 @@ Confirmed silicon (ESP32-S3 + SX1262), BOM (5 ICs / 2 tact switches / 3 input co
 
 ### Phase 1 — Scaffold · **NEXT (pending review of this rev2)**
 
-**Goal.** Stand up the empty firmware repo with a hello-world that builds *green* under both ESP-IDF and PlatformIO, with version-pinned CI, pre-commit secrets scanning, dual-build parity proven on this M5 Pro, and a placeholder `HARDWARE_REV.md` for cross-repo coupling.
+**Goal.** Stand up the empty firmware repo with a hello-world that builds *green* under ESP-IDF v5.5.4, with version-pinned CI, pre-commit secrets scanning, and a placeholder `HARDWARE_REV.md` for cross-repo coupling.
 
 **Entry criteria.**
 - ESP-IDF v5.5.4 sourced via `. ~/esp/esp-idf-v5.5.4/export.sh`; `idf.py --version` reports a tag containing `v5.5.4`
-- `pio --version` ≥ 6.1.13 (install via `pipx install platformio` if missing)
 - `gitleaks version` reports v8.30.x (currently v8.30.1)
 - `/opt/homebrew/opt/llvm@18/bin/clang-format --version` reports LLVM 18.x (`brew install llvm@18` — keg-only; explicit path required, do not rely on `$PATH`)
 - `pre-commit --version` ≥ 3.x (`pipx install pre-commit`)
-- User has reviewed and approved this `CLAUDE.md` rev3
+- User has reviewed and approved this `CLAUDE.md` rev4
 
 **Pre-scaffold isolation (per OQ-7 disposition (a)).**
 
@@ -247,17 +246,7 @@ If `idf.py --version` still shows `-dirty`, **stop** — investigate before scaf
    CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y
    ```
 
-7. Create `firmware/platformio.ini`:
-   ```ini
-   [env:esp32-s3-devkitc-1]
-   platform = espressif32 @ ~6.7.0
-   framework = espidf
-   board = esp32-s3-devkitc-1
-   board_upload.flash_size = 16MB
-   monitor_speed = 115200
-   ; Memory type / PSRAM mode comes from sdkconfig.defaults (espidf framework).
-   ; Custom partition table is added in Phase 7 (OTA) — default applies until then.
-   ```
+7. *(Removed in rev4 — was "create platformio.ini". PlatformIO dropped per §1 footnote ² and §3 #6. The single-build-path direction obsoletes this step.)*
 
 8. Create `tests/host/CMakeLists.txt` — placeholder, no targets defined yet:
    ```cmake
@@ -273,28 +262,25 @@ If `idf.py --version` still shows `-dirty`, **stop** — investigate before scaf
 
 11. Push branch `phase/p1-scaffold`. Open PR for self-review.
 
-**Smoke test (PASS/FAIL gate).** Run *exactly* this on M5 Pro; every command must succeed:
+**Smoke test (PASS/FAIL gate).** Run *exactly* this on M5 Pro; every command must succeed. Commands run **bare** — no piping (per Guardrail §3 #9). Forensic logs captured per `docs/RUNBOOK.md` on-failure procedure, never inline.
 
 ```bash
 cd ~/Developer/projects/firmware/rak3112-rs485-node
 
 # 1. Pre-commit on the whole tree
-pre-commit run --all-files                # expect: all hooks Passed
+pre-commit run --all-files                # expect: exit 0, all hooks Passed
 
 # 2. ESP-IDF build (use the v5.5.4 export.sh explicitly; not the dev-branch ~/esp/esp-idf)
 . ~/esp/esp-idf-v5.5.4/export.sh
 cd firmware
 idf.py set-target esp32s3
-idf.py build                              # expect: "Project build complete." + build/*.bin produced
-
-# 3. PlatformIO build
-pio run -e esp32-s3-devkitc-1             # expect: SUCCESS, .pio/build/esp32-s3-devkitc-1/firmware.bin produced
-
-# 4. Secret scan (defence-in-depth — also covered by pre-commit)
+idf.py build                              # expect: exit 0, "Project build complete.", build/*.bin produced
 cd ..
-gitleaks detect --no-banner --redact      # expect: "no leaks found"
 
-# 5. Host-test scaffolding present (no tests to run yet — gate on layout, not execution)
+# 3. Secret scan (defence-in-depth — also covered by pre-commit)
+gitleaks detect --no-banner --redact      # expect: exit 0, "no leaks found"
+
+# 4. Host-test scaffolding present (no tests to run yet — gate on layout, not execution)
 test -d tests/host && test -f tests/host/CMakeLists.txt   # expect: exit 0
 ```
 
@@ -352,12 +338,15 @@ Light-sleep between samples, task watchdog, brownout recovery, OTA-DFU (`partiti
 
 | Phase | Date | Outcome | Notes |
 |---|---|---|---|
-| 0 — Discovery | 2026-05-01 | PASS | Silicon = ESP32-S3 + SX1262 (verified from `.esym` pin labels). BOM = 5 ICs, 2 tact switches, DC1+P1+H1 input connectors. Toolchain = ESP-IDF v5.5.4 + PlatformIO platform-espressif32 ~6.7.0. Decision: split-repo. |
-| 1 — Scaffold | 2026-05-01 | in progress | — |
+| 0 — Discovery | 2026-05-01 | PASS | Silicon = ESP32-S3 + SX1262 (verified from `.esym` pin labels). BOM = 5 ICs, 2 tact switches, DC1+P1+H1 input connectors. Toolchain (rev3) = ESP-IDF v5.5.4 + PlatformIO platform-espressif32 ~6.7.0. Decision: split-repo. |
+| 1 — Scaffold (Attempt 1) | 2026-05-01 | **FAIL** | Smoke gate step 3 (`pio run`): "Missing the 'src' folder with project sources". Operator-side `\| tee \| tail` masked exit code initially. ESP-IDF build (step 2) PASS with binary 183 328 B. ESP-IDF stash restored cleanly. See `docs/RUNBOOK.md` Attempt 1. |
+| 1 — Scaffold (Attempt 2) | 2026-05-01 | **FAIL** | Branch `fix/p1-pio-srcdir`. P1-FIX-1 (src_dir=main + Guardrail #9) applied. Smoke gate step 3 (`pio run`) bare: `CMake Error … 3.20 or higher is required. You are running version 3.16.4`. Root cause: rev3 pinned ESP-IDF v5.5.4 + platform-espressif32 ~6.7.0 jointly inconsistent (PIO bundles ESP-IDF v5.2.1 + CMake 3.16). ESP-IDF build PASS, byte-identical to Attempt 1 binary. ESP-IDF stash restored. See `docs/RUNBOOK.md` Attempt 2 + Pin discipline lesson. |
+| 1 — Scaffold (Attempt 3) | 2026-05-01 | in progress | Branch `fix/p1-drop-platformio`. rev4 contract: PlatformIO dropped entirely; single canonical build path (ESP-IDF v5.5.4); 4-step smoke gate. |
 
 <!-- 2026-05-01: CLAUDE.md drafted, awaiting user review before Phase 1 execution. -->
 <!-- 2026-05-01: rev2 — applied E2 (PSRAM=n), E3 (version pins), E4 (drop arduino-only PIO setting + partitions), E5 (pre-commit), E6 (drop ctest from Phase 1 gate), R1 (.env.example), R2 (strap-pin specifics), R4 (versioned snapshot), R5 (filename note expanded), R6 (parity check → Phase 4 / OQ-6). E1 applied as split-repo (reversal of prior monorepo direction — flagged). R3 declined: global ~/.claude/CLAUDE.md §11+§15 authoritatively says current MCP Pi Gateway IP is 192.168.20.150 (relocated from .15.150 on 2026-04-23). -->
-<!-- 2026-05-01: rev3 — pin bumps approved per environmental audit. ESP-IDF v5.3.1 → v5.5.4 (already side-installed at ~/esp/esp-idf-v5.5.4/). gitleaks v8.21.x → v8.30.x (currently v8.30.1, already installed). clang-format LLVM 18 keg-only path documented. §8 MCP Pi gateway row strike (out-of-scope; IP authority lives in global §11/§15). Phase 1 execution begins. -->
+<!-- 2026-05-01: rev3 — pin bumps approved per environmental audit. ESP-IDF v5.3.1 → v5.5.4 (already side-installed at ~/esp/esp-idf-v5.5.4/). gitleaks v8.21.x → v8.30.x (currently v8.30.1, already installed). clang-format LLVM 18 keg-only path documented. §8 MCP Pi gateway row strike. Phase 1 execution begins. -->
+<!-- 2026-05-01: rev4 — PlatformIO dropped after Attempt 2 exposed the joint-pin inconsistency. Single canonical build path = ESP-IDF v5.5.4 via idf.py for both local and CI. §3 #6 rewritten to functional-equivalence (the byte-equivalent framing in earlier reviews was operator-introduced and not load-bearing in the contract). Guardrail #9 (gate-execution discipline) preserved. OQ-6 closed. New Pin-discipline lesson in RUNBOOK. CI matrix down to 4 jobs (no pio-build). -->
 
 ---
 
@@ -370,7 +359,7 @@ Light-sleep between samples, task watchdog, brownout recovery, OTA-DFU (`partiti
 | OQ-3 | LoRaWAN stack — RadioLib vs LMIC vs LoRaMac-node port? | Phase 5 / ADR-003 | Default RadioLib (active maintenance, ESP-IDF-friendly, SX1262 native). |
 | OQ-4 | AS923 sub-band for Bangladesh deployment | Phase 5 / ADR-004 | Confirm against `rnd-southerniot/siot-crm-review` ChirpStack region config. |
 | OQ-5 | Antenna option for `-9-SM-I` variant — IPEX vs onboard PCB? | Phase 2 (visual inspection) | Defer to bench-side inspection. |
-| OQ-6 | sdkconfig parity check between `idf.py` and `pio` build outputs — design + add CI step. | Phase 4 | Phase 1 gates only on "both build green"; output-parity gate added when more sdkconfig surface area is in use. |
+| ~~OQ-6~~ | ~~sdkconfig parity check between `idf.py` and `pio` build outputs.~~ | **CLOSED 2026-05-01** | Obsolete: PlatformIO dropped at Phase 1 Attempt 2 (rev4). With a single canonical build path, there's no second build to parity-check against. See §1 footnote ². |
 | OQ-7 | ESP-IDF local patches in `~/esp/esp-idf-v5.5.4/` (stashed during Phase 1 to ensure pristine `v5.5.4` build) — vendor properly into `firmware/esp-idf-patches/` with attribution and intent documentation. **Phase 2 entry prereq** before any code touching USB or parallel-IO peripherals. | Phase 2 / ADR-001 prereq | (a) `usb_types_ch9.h` (IAD descriptor size 9→8): likely upstream bug fix per USB 2.0 ECN — vendor as `0001-fix-iad-desc-size.patch`, file ESP-IDF GitHub issue, submit upstream PR if confirmed. (b) `esp_lcd_panel_io_parl.c` (PARLIO sample edge POS→NEG): **intent unclear — investigate before vendoring.** If real fix, vendor like (a); if hardware-specific workaround, gate behind Kconfig and document hardware case. **Do not vendor an undocumented patch.** |
 | OQ-8 | Schematic title says "**RS485 P2P Node V1.1**" — does this design target **LoRa P2P** (raw radio link, no LoRaWAN stack) or **LoRaWAN** (with OTAA join, AS923 region, ChirpStack uplink)? Affects OQ-3 (stack choice) and the entire Phase 5 narrative. | Phase 2 / ADR-001 sign-off | Verify intent with the hardware design owner. If P2P: Phase 5 becomes "RadioLib SX1262 raw P2P" instead of LoRaWAN OTAA join; ChirpStack reference at `10.10.8.140` becomes irrelevant. If LoRaWAN: rename to suppress "P2P" in firmware naming and proceed as currently scoped. |
 

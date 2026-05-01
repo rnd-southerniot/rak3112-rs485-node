@@ -1,0 +1,24 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-merge-conflict
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: clang-format (LLVM 18.x, keg-only)
+        entry: /opt/homebrew/opt/llvm@18/bin/clang-format
+        args: [--style=file, -i]
+        language: system
+        types_or: [c, c++]
+        files: \.(c|cc|cpp|h|hpp)$

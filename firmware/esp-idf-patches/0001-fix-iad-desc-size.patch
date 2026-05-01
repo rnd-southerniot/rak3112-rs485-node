@@ -1,0 +1,54 @@
+From: Arif (siot-dev-m5) <arif@southerniot.com>
+Date: Fri, 01 May 2026 13:17:18 +0000
+Subject: [PATCH] Fix USB_IAD_DESC_SIZE: 9 -> 8 per USB 2.0 ECN
+
+The USB Interface Association Descriptor (IAD), defined in the USB 2.0
+ECN "Interface Association Descriptors" (May 2003), is exactly 8 bytes:
+
+  bLength            (1) +
+  bDescriptorType    (1) +
+  bFirstInterface    (1) +
+  bInterfaceCount    (1) +
+  bFunctionClass     (1) +
+  bFunctionSubClass  (1) +
+  bFunctionProtocol  (1) +
+  iFunction          (1) = 8 bytes
+
+ESP-IDF v5.5.x release branch defines this as 9, which is incorrect and
+makes the static_assert on `sizeof(usb_iad_desc_t) == USB_IAD_DESC_SIZE`
+silently bake the wrong size into any code that uses the IAD type for
+composite-device descriptor assembly.
+
+ESP-IDF master has refactored USB types and the `USB_IAD_DESC_SIZE`
+constant no longer exists in this form there, so the bug is implicitly
+fixed in master. v5.5.x release branch retains the wrong value.
+
+This patch corrects v5.5.4 to match the spec.
+
+Attribution: local origin. No upstream PR exists at time of vendoring
+(2026-05-01). Filing one against `release/v5.5` is logged as a deferred
+task in docs/RUNBOOK.md / ADR-001 appendix.
+
+Project: rnd-southerniot/rak3112-rs485-node (firmware repo)
+Phase:   2, EC-1, 2026-05-01
+
+Reference: USB 2.0 ECN, "Interface Association Descriptors" (May 2003)
+---
+ components/usb/include/usb/usb_types_ch9.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/components/usb/include/usb/usb_types_ch9.h b/components/usb/include/usb/usb_types_ch9.h
+index 500a5dc5..fca00948 100644
+--- a/components/usb/include/usb/usb_types_ch9.h
++++ b/components/usb/include/usb/usb_types_ch9.h
+@@ -384,7 +384,7 @@ ESP_STATIC_ASSERT(sizeof(usb_config_desc_t) == USB_CONFIG_DESC_SIZE, "Size of us
+ /**
+  * @brief Size of a USB interface association descriptor in bytes
+  */
+-#define USB_IAD_DESC_SIZE    9
++#define USB_IAD_DESC_SIZE    8
+
+ /**
+  * @brief Structure representing a USB interface association descriptor
+--
+2.53.0

@@ -2,6 +2,60 @@
 
 Operational log for `rak3112-rs485-node` firmware. Append-only.
 
+## Phase 2 attempts
+
+### EC-1 — 2026-05-01 — PASS (vendored IAD only; PARLIO held back)
+
+**Patch dispositions per rev5 §5 EC-1:**
+
+| Patch | Disposition | Rationale |
+|---|---|---|
+| `usb_types_ch9.h` (`USB_IAD_DESC_SIZE` 9 → 8) | **Vendored** as `firmware/esp-idf-patches/0001-fix-iad-desc-size.patch` | Verifiable correct against USB 2.0 ECN "Interface Association Descriptors" (May 2003). v5.5.4 + release/v5.5 branch tip both ship `9`; ESP-IDF master has refactored away from this path so the bug is implicitly fixed there. No upstream PR exists. |
+| `esp_lcd_panel_io_parl.c` (`sample_edge` POS → NEG) | **Not vendored.** Stays in `~/esp/esp-idf-v5.5.4/` as personal modification | Author intent could not be recovered (neither chat-side nor user-side instance has access to the operator's keystroke memory; no commit on the local IDF tree captures the rationale). Per rev5 EC-1: "If intent cannot be determined, the patch is NOT vendored." Plausibility of the change does not satisfy the rule. |
+
+**Plausible-but-undocumented theory for the PARLIO mod (recorded as theory, not as confirmed reason):**
+
+- v5.5.4 default: `.sample_edge = PARLIO_SAMPLE_EDGE_POS`
+- ESP-IDF master: field renamed to `shift_edge` with `PARLIO_SHIFT_EDGE_NEG` as the default
+- The local mod's POS → NEG flip aligns with master's default behaviour
+- This *suggests* the mod was a real fix, but the contract requires documented author intent — alignment with master is post-hoc reasoning, not provenance
+
+**Asymmetric outcome accepted (Footnote 1):**
+
+- Local builds on `siot-dev-m5` will produce `v5.5.4-dirty` (PARLIO mod still present in `~/esp/esp-idf-v5.5.4/` working tree, off-compile-path for this firmware).
+- CI builds (clean clone + `apply-patches.sh`) will produce clean `v5.5.4` with IAD patch applied.
+- §3 #6 single-canonical-build-path invariant **NOT violated**: same ESP-IDF version, same target, same `sdkconfig.defaults`, only an extra incidental working-tree mod on local that doesn't affect the heartbeat compile path.
+
+**EC-1 fresh-clone verification (per the rev5 verification routine):**
+
+| Step | Result |
+|---|---|
+| `git clone --depth 1 --branch v5.5.4 espressif/esp-idf` | OK |
+| `git submodule update --init --recursive --depth 1` | OK |
+| Pre-patch sanity grep | `#define USB_IAD_DESC_SIZE    9` ← upstream wrong |
+| `apply-patches.sh` (IDF_PATH = temp clone) | `Applied: 0001-fix-iad-desc-size.patch` |
+| Post-patch sanity grep | `#define USB_IAD_DESC_SIZE    8` ← corrected |
+| `idf.py build` (output to `firmware/build-verify/`) | `Project build complete.` |
+| Cleanup of temp ESP-IDF clone + `build-verify/` | OK |
+| Phase 1 baseline `firmware/build/` | preserved untouched |
+
+**Build-timestamp finding (worth flagging in advance for Phase 5+):**
+
+- Phase 1 baseline binary SHA-256: `a2f3d6044f9458aa38a492cad531c53071b2f829a33f5fd2635db72271fe5116` (built against pristine v5.5.4, no IAD patch)
+- Phase 2 EC-1 verification binary SHA-256: `d47500e3906766219cd466a475d85f18bdd6fd056386cfa3a4e568d35cb4b7a7` (built against pristine v5.5.4 + IAD patch)
+- The SHAs differ even though the IAD constant is off-compile-path for the heartbeat (no USB host stack, no `usb_iad_desc_t` instantiation, no `static_assert` activation).
+- Cause: ESP-IDF embeds build timestamps + source-path strings in the app descriptor and debug info. Without `CONFIG_APP_REPRODUCIBLE_BUILD=y` enabled, every rebuild has a different timestamp by design.
+- **Implication for §3 #6 reproducibility guarantee:** the contract wording "functionally identical (modulo embedded timestamp / git-describe strings)" is exactly on point — timestamp is the `modulo`. SHA inequality between rebuilds at different wall-clock times is expected and does not violate the invariant.
+- **Phase 5+ consideration:** if byte-identical builds become valuable (e.g., for over-the-air update integrity, or for reproducible-build CI verification), enable `CONFIG_APP_REPRODUCIBLE_BUILD=y` then. Not enabling now keeps timestamps useful for forensic correlation.
+
+**Deferred task — file upstream PR for IAD fix.**
+
+The `0001-fix-iad-desc-size.patch` is a verifiable bug fix in ESP-IDF's `release/v5.5` branch. Worth filing upstream as a PR against `espressif/esp-idf`'s `release/v5.5` branch. Not blocking for Phase 2 / hardware-side work. Logged here; will be moved into `ADR-001-pin-map.md` appendix when that doc exists, or stay here as a "deferred upstream contributions" entry.
+
+Suggested PR title: `fix(usb): USB_IAD_DESC_SIZE is 8 bytes per USB 2.0 ECN, not 9 (release/v5.5)`
+
+---
+
 ## Phase 1 attempts
 
 ### Attempt 2 — 2026-05-01 — FAIL on smoke-gate step 3 (PlatformIO + ESP-IDF version mismatch)

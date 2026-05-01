@@ -269,3 +269,31 @@ Module vendors abstract over silicon vendors. When the abstraction layer is opaq
 **Cross-project applicability.** `rnd-southerniot/rak3112-dynamic-sensor` should also enable Octal PSRAM when its use case requires PSRAM. Same silicon, same answer. Documented here as a shared lesson; that project's CLAUDE.md / sdkconfig update is out of scope for this repo's commits but tracked as a deferred cross-project note.
 
 **Promotion candidate** for global CLAUDE.md when the operator next does a global doc-discipline pass.
+
+---
+
+## Pre-commit hook side-effects on checksums (2026-05-02, lesson from Phase 2 EC-9 pre-flight)
+
+**When a pre-commit hook modifies a file, any checksums computed *before* the hook run are stale.** The committed checksum file ends up referencing the pre-hook bytes; the on-disk file has post-hook bytes; `sha256sum -c CHECKSUMS.txt` fails until someone re-runs the gate.
+
+❌ **Anti-example (hw repo, Phase 2 EC-2 commit `970cdf0`).** Sequence:
+
+1. `shasum -a 256 *.pdf *.epro *.json page-*.png > CHECKSUMS.txt` — captures pre-hook hashes.
+2. `git add -A`.
+3. `pre-commit run --all-files` → end-of-file-fixer modifies `esch-pin-labels.json` (adds trailing newline).
+4. `git add -A` (re-stages the modified JSON; CHECKSUMS.txt unchanged).
+5. `git commit` → CHECKSUMS.txt records pre-fixer JSON hash; JSON file has post-fixer bytes.
+
+The EC-2 smoke gate (`sha256sum -c CHECKSUMS.txt`) appeared to pass at commit time because pre-commit ran on a self-consistent staged tree. But the **committed** CHECKSUMS.txt was computed before the eof-fixer modification; the **committed** JSON was modified by the eof-fixer afterwards. Mismatch ran silently from EC-2 (2026-05-01) through EC-7 close (2026-05-02). Detected at Phase 2 EC-9 pre-flight when SHA-256s were re-computed for the `adr-001-locked` tag annotation; fixed by regenerating CHECKSUMS.txt against the post-hook tree and bundling the fix into the sign-off commit.
+
+✅ **Generalised rule.** When a checksum file is committed alongside the files it references, the checksum **must** be computed *after* the pre-commit hook chain has stabilised. Three viable patterns:
+
+- (a) **Manual sequence:** run `pre-commit run --all-files` first, let hooks modify whatever they will, *then* compute checksums on the post-hook tree.
+- (b) **CHECKSUMS regeneration as a pre-commit hook:** add a hook that runs after the file-modifying hooks (eof-fixer, trailing-whitespace, formatters) and rewrites CHECKSUMS.txt from the post-hook tree.
+- (c) **Self-verification hook:** add a hook that fails the commit if `sha256sum -c CHECKSUMS.txt` doesn't match the staged tree. Forces the operator to regenerate before commit.
+
+For this project, pattern (a) is sufficient at the current scale. Future Phase 3+ work that adds host tests with binary fixtures may benefit from (b) or (c) if checksum drift becomes a recurring failure mode.
+
+**Reference incident:** EC-2 (2026-05-01) committed stale CHECKSUMS.txt for `esch-pin-labels.json`. Detected at EC-9 pre-flight (2026-05-02). No data corruption, no contract violation rolled forward downstream — but the EC-2 gate was technically failing during EC-3..EC-7. Worth a small audit of the EC-3..EC-7 commits if any depended on `sha256sum -c` passing.
+
+**Promotion candidate** for global CLAUDE.md (joining the four prior lessons — five total now).

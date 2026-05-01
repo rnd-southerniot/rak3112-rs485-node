@@ -7,8 +7,8 @@ This firmware repo is paired with a hardware revision tracked in a separate hard
 The CLAUDE.md §5 EC-8 smoke gate parses the three lines below via `grep -qE '^pinned_sha:\s+[a-f0-9]{40}$' HARDWARE_REV.md` and `awk '/^pinned_sha:/ {print $2}'`. **Do not reformat without updating the gate.**
 
 ```
-pinned_sha:  8554115b8dadee593b615d9b47baad67d8ac66d6
-pinned_tag:  (interim — replaced by adr-001-locked tag SHA at EC-9 sign-off)
+pinned_sha:  a0b002ca709598ddd44aca7e8f5e829348da8295
+pinned_tag:  adr-001-locked
 pinned_date: 2026-05-02
 ```
 
@@ -19,10 +19,11 @@ pinned_date: 2026-05-02
 | Hardware repo (canonical) | [`rnd-southerniot/rak3112-rs485-node-hw`](https://github.com/rnd-southerniot/rak3112-rs485-node-hw) (created 2026-05-02) |
 | Local working tree | `~/Developer/projects/pcb-design/rak3112-rs485-node-hw/` |
 | Pinned revision label | `V1.1` (EasyEDA Pro project, captured 2026-05-01; re-exported with corrected internal Version ATTR 2026-05-01) |
-| Pinned tag | **interim — `main` tip SHA at EC-8b publish.** Replaced by `adr-001-locked` tag SHA at EC-9 sign-off. |
-| Pinned commit SHA | `8554115b8dadee593b615d9b47baad67d8ac66d6` (full 40-char hex, no truncation per "aesthetic vs functional preference" lesson) |
-| Date pinned | 2026-05-02 (Phase 2 EC-8b publish) |
-| Firmware phase when pinned | Phase 2 EC-8b (interim pin; first formal `adr-001-locked` SHA pin lands at EC-9) |
+| Pinned tag | [`adr-001-locked`](https://github.com/rnd-southerniot/rak3112-rs485-node-hw/releases/tag/adr-001-locked) (Phase 2 EC-9 sign-off) |
+| Pinned commit SHA | `a0b002ca709598ddd44aca7e8f5e829348da8295` (full 40-char hex; commit subject `ADR-001: pin map signed off (V1.1)`; signed-off-by `Arif <rnd@southerniot.net>`) |
+| Date pinned | 2026-05-02 (Phase 2 EC-9 sign-off) |
+| Firmware phase when pinned | Phase 2 EC-9 (durable pin to ADR sign-off; supersedes EC-8b interim main-tip pin) |
+| Previous interim pin | `8554115b8dadee593b615d9b47baad67d8ac66d6` (EC-8b publish, hw-repo main tip; superseded by this commit) |
 
 ## Pin lifecycle
 

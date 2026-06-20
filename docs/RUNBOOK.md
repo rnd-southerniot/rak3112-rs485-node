@@ -117,6 +117,43 @@ tag `phase-3-first-flash-green` stand — same firmware, same PASS, now on the c
 **The project board is MAC `3c:dc:75:6f:85:dc` — use this MAC as the flash-target identity from
 Phase 4 onward** (the pins-exposed unit needed for RS-485 / SX1262 bring-up).
 
+## Phase 4 — RS-485 echo: bench setup + attempts
+
+### Bench setup (HIL)
+
+- **Field wiring:** CN1 (3-pin) → USB-RS485 adapter: `A`↔`A`, `B`↔`B`, `GND`↔`GND`.
+- **Termination:** the board has **no on-board 120 Ω** (ADR-002). Fit **120 Ω across A/B at both
+  bus ends** — one at the adapter, one at the node (or, for the 9600 low-speed first pass on a
+  short stub, a single 120 Ω is tolerable). At 115200 use both.
+- **Fail-safe bias:** confirm idle line is quiet; if spurious RX bytes appear at idle, add bias at
+  one end (A→3V3 / B→GND via ~560 Ω–1 kΩ). R38/R39 (2.2 kΩ) may already provide this — verify.
+- **Logic analyzer:** Saleae Logic 2 on **GPIO21** (DE/RE) and the A/B pair; trigger on a TX burst.
+- **Project board only:** flash target **MAC `3c:dc:75:6f:85:dc`** (`/dev/cu.usbmodem1301`).
+
+### Two-pass gate (per ADR-002)
+
+1. `RS485_ECHO_BAUD = 9600`, build+flash, loop a 256-byte pattern from the adapter → byte-identical
+   echo, 0 framing errors, idle quiet.
+2. Change `RS485_ECHO_BAUD = 115200` in `firmware/main/app_main.c`, re-flash, repeat.
+3. Saleae: DE-assert→first-bit and last-bit→DE-release within TP8485E spec; no contention.
+
+### Attempt 1 — 2026-06-20 — on-target bring-up PASS (HIL echo pending bench gear)
+
+Firmware (UART1 half-duplex + inverted RTS) flashed to the project board (MAC `…85:dc`).
+On-target init verified from the boot log (bus not yet connected):
+
+```
+I (837) rs485: RS-485 UART1 up: TX=43 RX=44 DE/RE=21 @ 9600 8N1 (half-duplex, RTS inverted)
+I (5837) app: rs485 echo alive: 0 bytes echoed
+rak3112-rs485-node alive: tick=0 / tick=1   (5 s cadence)
+```
+
+`rs485_init()` (driver install + param + set_pin + RS485 half-duplex mode + RTS invert) returned
+ESP_OK — `ESP_ERROR_CHECK` did not abort. PSRAM + GPIO9/40 floating still nominal; no bootloop.
+Host `ctest` (ring_buffer, 6 checks) green. **HIL echo + DE/RE turnaround (9600 → 115200) held
+pending USB-RS485 adapter + Saleae on the bench.** Binary SHA-256
+`8fca54c7e23908108d3a15e9f4a2144836cf097a707f5b2a519fe2fd6d3bb225`.
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

@@ -29,7 +29,62 @@ Operational log for `rak3112-rs485-node` firmware. Append-only.
 
 ### Phase 3 attempts
 
-_(none yet — first-flash pending bench execution)_
+#### Attempt 1 — 2026-06-20 — PASS (console finding: USB_CDC → USB_SERIAL_JTAG)
+
+**Bench:** two boards connected. Target disambiguated by chip-id/MAC **before** every flash
+(Guardrail §3 #1):
+- `/dev/cu.usbmodem1301` = **ESP32-S3 (QFN56) rev v0.2, Embedded PSRAM 8MB (AP_3v3)**,
+  MAC `3c:dc:75:6f:89:24` → **RAK3112** (target), on its **native USB**.
+- `/dev/cu.usbserial-140` = **ESP32-P4**, MAC `30:ed:a0:e1:8e:1c` → unrelated board on a
+  USB-UART bridge. Never flashed.
+
+**Console finding (the substantive Phase 3 result).** The Phase-1 default
+`CONFIG_ESP_CONSOLE_USB_CDC=y` (OTG/TinyUSB) produced **no visible console** on the RAK3112's
+native USB — 0 bytes via raw read *and* via `idf.py monitor`, while the app ran fine (port
+stable, no bootloop). The RAK3112 native USB (`USB_D±`) is the ESP32-S3 **USB-Serial-JTAG**
+controller — the same interface esptool flashes over. Switching to
+`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` made the console fully visible. This supersedes the
+Phase-1 USB_CDC choice in `sdkconfig.defaults`.
+
+Also captured during the investigation: a stale/wedged USB endpoint (`errno 6 Device not
+configured`) was cleared by a physical replug + carrier swap; macOS `/dev/cu.*` (call-out)
+must be used for reading, not `/dev/tty.*` (dial-in, blocks on carrier).
+
+**PASS evidence (verbatim boot log, USB-Serial-JTAG @ 115200):**
+
+```
+rst:0x15 (USB_UART_CHIP_RESET),boot:0x2a (SPI_FAST_FLASH_BOOT)
+I (24) boot: ESP-IDF v5.5.4-dirty 2nd stage bootloader
+I (25) boot.esp32s3: Boot SPI Speed : 80MHz   SPI Mode : DIO   SPI Flash Size : 16MB
+I (73) octal_psram: vendor id    : 0x0d (AP)
+I (74) octal_psram: VCC          : 0x01 (3V)
+I (75) esp_psram: Found 8MB PSRAM device
+I (76) esp_psram: Speed: 40MHz
+I (807) esp_psram: SPI SRAM memory test OK
+I (816) cpu_start: Pro cpu start user code
+I (816) app_init: Project name:     rak3112_rs485_node
+I (819) esp_psram: Adding pool of 8192K of PSRAM memory to heap allocator
+I (832) app: reserved pins GPIO9/GPIO40 held floating (V1.2 I2C placeholder)
+rak3112-rs485-node alive: tick=0
+rak3112-rs485-node alive: tick=1
+...
+rak3112-rs485-node alive: tick=10
+```
+
+**Gate result — all PASS:**
+- `Found 8MB PSRAM device` present within ~75 ms of reset ✅
+- `Adding pool of 8192K of PSRAM memory to heap allocator` present ✅
+- Octal mode + 3 V confirmed empirically (`octal_psram vendor id 0x0d (AP)`, `VCC 0x01 (3V)`) —
+  matches ADR-001 EC-6 (ESP32-S3R8) ✅
+- `SPI SRAM memory test OK` ✅
+- GPIO9/GPIO40 floating-init log present ✅ (ADR-001 EC-4/EC-9 carry-forward)
+- Heartbeat 1 Hz, monotonic, **no bootloop**, single `rst:0x15`, no `Brownout`/`panic`/`abort` ✅
+
+**Carry-forward note for the contract:** Phase 3 title says "USB-CDC console"; the verified
+console is **USB-Serial-JTAG** (native USB). Treat "USB-CDC" in the Phase 3 heading as
+"native-USB console". `CONFIG_SPIRAM_SPEED` defaults to 40 MHz (Octal) — a deliberate
+non-decision so far; pin explicitly if the 80 MHz bandwidth is ever needed (see Phase 3 review
+finding on implicit SPIRAM defaults).
 
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 

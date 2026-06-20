@@ -1,10 +1,11 @@
 /*
  * rs485.h — half-duplex RS-485 transport over an ESP32-S3 UART (TP8485E / U9).
  *
- * Per ADR-002 (cites hardware ADR-001 EC-5a): UART RS-485 half-duplex mode drives the
- * DE/RE line in hardware (deterministic turnaround), and the RTS signal is INVERTED to
- * match the board's Q6 NPN inverter — GPIO21 LOW = transmit, HIGH = receive. DE and RE
- * are tied, so the node never receives its own transmission (no TX echo on RX).
+ * Per ADR-002 rev2: UART RS-485 half-duplex mode drives the DE/RE line in hardware
+ * (deterministic turnaround) with STANDARD (non-inverted) polarity — empirically confirmed
+ * on the project board (Phase 4, 2026-06-20): GPIO21 HIGH = transmit, LOW (idle) = receive.
+ * (ADR-001 EC-5a's "inverted" reading was wrong.) DE and RE are tied, so the node never
+ * receives its own transmission (no TX echo on RX).
  */
 #ifndef RS485_H
 #define RS485_H

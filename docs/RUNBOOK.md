@@ -154,6 +154,37 @@ Host `ctest` (ring_buffer, 6 checks) green. **HIL echo + DE/RE turnaround (9600 
 pending USB-RS485 adapter + Saleae on the bench.** Binary SHA-256
 `8fca54c7e23908108d3a15e9f4a2144836cf097a707f5b2a519fe2fd6d3bb225`.
 
+### Attempt 2 — 2026-06-20 — HIL echo PASS (DE/RE polarity was inverted in the spec)
+
+**Smoke gate PASS — byte-identical echo at both bauds**, driven host-side through a USB-RS485
+adapter (256-byte ramp pattern, 16-byte half-duplex bursts):
+
+| Baud | sent | echoed | identical |
+|---|---|---|---|
+| 9600 8N1 | 256 | 256 | **yes** |
+| 115200 8N1 | 256 | 256 | **yes** |
+
+**Root-cause lesson — believe the instrument, not the spec; and build a ground-truth detector
+early.** Bring-up burned many cycles chasing the adapter and A/B polarity (two adapters, both
+A/B orientations, RTS/DTR combos, a 5V jumper) — all red herrings. The break came from a
+*reliable detector*: reading the DUT's own RX counter over the (now-working) USB-Serial-JTAG
+console, then a toggle diagnostic that drove GPIO21 as a plain output alternating HIGH/LOW
+while listening. Result was unambiguous: **GPIO21 LOW → clean RX of the pattern; GPIO21 HIGH →
+nothing.** So DE/RE is **standard** (HIGH=TX, LOW=RX), *not* inverted.
+
+`ADR-001 EC-5a` had documented it inverted (`GPIO21 HIGH = receive`); `rs485.c` faithfully
+inverted RTS to match, which **idled U9 in transmit** — the node never listened and its driver
+contended with the partner (that's why earlier captures were empty or garbled). Fix:
+`uart_set_line_inverse(..., UART_SIGNAL_INV_DISABLE)` (no inversion). Corrected in firmware
+(ADR-002 rev2, `gpio_remap.h`, `PIN_MAP.md`) and hardware-side (ADR-001 EC-5a correction).
+
+Adapter note: once polarity was right, **Adapter 1 (CH340)** gave byte-identical echo at both
+bauds. Adapter 2 (FT232/75176) delivered no signal in this setup (separate, unresolved adapter
+issue) — not on the project's critical path.
+
+Saleae DE/RE turnaround characterization: deferred/optional — byte-identical echo at 115200
+(where turnaround margin is tightest) already demonstrates correct DE assert/deassert timing.
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

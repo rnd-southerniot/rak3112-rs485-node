@@ -1,7 +1,9 @@
 # ADR-002: RS-485 bus electrical + DE/RE control strategy
 
 ## Status
-ACCEPTED-pending-sign-off  ·  Phase 4
+ACCEPTED-pending-sign-off  ·  Phase 4 · **rev2** (2026-06-20: DE/RE polarity corrected to
+STANDARD after on-board measurement; the rev1 "inverted RTS" approach idled U9 in transmit
+and the node never received. See "DE/RE polarity correction" below.)
 
 ## Context
 
@@ -14,10 +16,13 @@ Hardware facts are fixed by **hardware ADR-001 (adr-001-locked, hw-repo a0b002c)
 - UART pins: **TX = GPIO43** → U9 `D` via R34 (1 kΩ series); **RX = GPIO44** ← U9 `R`.
   Console is native USB-Serial-JTAG, so UART0/1 on these pins is free for the field bus.
 - DE/RE control: **GPIO21** → Q6 (LMBT4401LT1G NPN) base via R35 (10 kΩ) → U9 DE+RE
-  (tied) via R36 (0 Ω). **Inverted polarity** (ADR-001 EC-5a):
-  - `GPIO21 HIGH` → Q6 saturates → DE+RE **LOW** → U9 **RECEIVE**
-  - `GPIO21 LOW`  → Q6 off → DE+RE **HIGH** → U9 **TRANSMIT**
-  This is the inverse of the usual ESP-IDF RS-485 convention (RTS/DE active-high = TX).
+  (tied) via R36 (0 Ω). **STANDARD polarity — measured on the project board 2026-06-20:**
+  - `GPIO21 HIGH` → U9 **TRANSMIT** (DE active)
+  - `GPIO21 LOW` (idle) → U9 **RECEIVE**
+  This is the *usual* ESP-IDF RS-485 convention (RTS/DE active-high = TX), so **no inversion**.
+  > ADR-001 EC-5a described this as inverted (`GPIO21 HIGH = receive`). That is **wrong** —
+  > a toggle test on the board (forced GPIO21 LOW → clean RX of the test pattern; HIGH → none)
+  > proved standard polarity. A correction is filed against hardware ADR-001 EC-5a.
 - Field connector CN1 (3-pin: A / B / GND). D6 (LRC399-04AT1G) ESD array on the A/B pair.
 
 ### Bus-electrical inventory (from V1.1 BOM, values confirmed 2026-06-20)
@@ -46,15 +51,24 @@ Hardware facts are fixed by **hardware ADR-001 (adr-001-locked, hw-repo a0b002c)
 - **`UART_MODE_RS485_HALF_DUPLEX`** — the UART hardware asserts RTS (DE) before the first
   TX bit and deasserts it only **after the last stop bit** clears the shift register,
   giving deterministic, jitter-free turnaround that software GPIO toggling cannot match.
-- **Invert the RTS line: `uart_set_line_inverse(UART_NUM_1, UART_SIGNAL_RTS_INV)`** so the
-  hardware-driven DE maps through Q6 correctly: during TX, RTS-internal asserts → GPIO21
-  driven **LOW** → DE+RE HIGH → U9 transmits; idle/RX → GPIO21 **HIGH** → U9 receives.
-  This composes the hardware timing of half-duplex mode with the board's inverted Q6 stage.
+- **No RTS inversion** — `uart_set_line_inverse(UART_NUM_1, UART_SIGNAL_INV_DISABLE)`. The
+  default half-duplex RTS=DE is active-high: during TX, RTS → GPIO21 **HIGH** → U9 transmits;
+  idle/RX → GPIO21 **LOW** → U9 receives. That matches the board's *measured* standard polarity.
 
-Rationale for hardware mode + inversion over manual GPIO toggling: manual `gpio_set_level`
-around `uart_write_bytes` + `uart_wait_tx_done` works but the deassert race (flipping to RX
-before the last stop bit fully shifts out) truncates the final byte at high baud; the
-hardware RS-485 mode eliminates that race. Inverting RTS is a one-call adaptation to Q6.
+Rationale for hardware mode over manual GPIO toggling: manual `gpio_set_level` around
+`uart_write_bytes` + `uart_wait_tx_done` works but the deassert race (flipping to RX before
+the last stop bit fully shifts out) truncates the final byte at high baud; the hardware
+RS-485 mode eliminates that race.
+
+### DE/RE polarity correction (rev2, 2026-06-20)
+
+rev1 inverted RTS to follow ADR-001 EC-5a ("GPIO21 HIGH = receive"). On the bench the node
+received **nothing** — the inversion idled U9 in *transmit*, so it never listened (and its
+own driver contended with the partner, producing the garbled/empty captures during bring-up).
+A toggle diagnostic (drive GPIO21 as a plain output, alternate HIGH/LOW while listening)
+settled it: **GPIO21 LOW → clean RX of the 256-byte pattern; GPIO21 HIGH → nothing.** So
+DE/RE is **standard** (HIGH=TX, LOW=RX). Removing the inversion fixed it: byte-identical echo
+at 9600 **and** 115200. ADR-001 EC-5a is corrected hw-side; firmware no longer inverts RTS.
 
 ### 2. Bus electrical (bench + deployment)
 
@@ -78,8 +92,9 @@ hardware RS-485 mode eliminates that race. Inverting RTS is a one-call adaptatio
 ## Consequences
 
 - Firmware is portable across baud rates via Kconfig/define; no hand-tuned turnaround delays.
-- Inverted-RTS choice is load-bearing: if a future board removes the Q6 inverter, this single
-  `uart_set_line_inverse` call is the one place to change.
+- DE/RE polarity is load-bearing and now matches measured hardware: the single
+  `uart_set_line_inverse(..., UART_SIGNAL_INV_DISABLE)` call is the one place to change if a
+  future board revision alters the Q6 stage.
 - External termination/bias is an operational requirement (documented in RUNBOOK bench setup);
   a deployed node at a bus end needs the 120 Ω fitted.
 
@@ -87,8 +102,8 @@ hardware RS-485 mode eliminates that race. Inverting RTS is a one-call adaptatio
 
 - **Manual GPIO21 toggling around TX** — rejected: deassert race truncates the last byte at
   115200 unless padded with a guard delay that wastes bus time and is fragile across baud.
-- **Non-inverted RTS + accept wrong polarity** — rejected: would hold U9 in the wrong
-  direction (bus contention / no TX).
+- **Inverted RTS (rev1, following ADR-001 EC-5a)** — rejected: held U9 in the wrong direction
+  (idled in transmit), so the node never received; bench-proven wrong and reverted in rev2.
 - **UART0 instead of UART1** — UART0 is free (console moved to USB-Serial-JTAG), but UART1 is
   used to keep UART0 conventionally reserved and avoid any ROM/bootloader coupling.
 

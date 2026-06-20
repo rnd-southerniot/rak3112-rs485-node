@@ -28,11 +28,14 @@ esp_err_t rs485_init(const rs485_config_t *cfg)
     /* Hardware drives RTS(=DE/RE) asserted through the last stop bit — no SW turnaround race. */
     ESP_RETURN_ON_ERROR(uart_set_mode(cfg->port, UART_MODE_RS485_HALF_DUPLEX), TAG,
                         "uart_set_mode");
-    /* Q6 inverts DE/RE (ADR-001 EC-5a): invert RTS so GPIO LOW = TX, HIGH = RX. */
-    ESP_RETURN_ON_ERROR(uart_set_line_inverse(cfg->port, UART_SIGNAL_RTS_INV), TAG,
+    /* DE/RE is STANDARD polarity (empirically confirmed on the project board, Phase 4
+     * 2026-06-20): RTS HIGH = DE active = TRANSMIT; RTS LOW (idle) = RECEIVE. No inversion.
+     * ADR-001 EC-5a's "inverted, GPIO21 HIGH = receive" reading was wrong (see ADR-002 rev2);
+     * inverting RTS idled U9 in transmit and it never received. Clear all line inversions. */
+    ESP_RETURN_ON_ERROR(uart_set_line_inverse(cfg->port, UART_SIGNAL_INV_DISABLE), TAG,
                         "uart_set_line_inverse");
 
-    ESP_LOGI(TAG, "RS-485 UART%d up: TX=%d RX=%d DE/RE=%d @ %d 8N1 (half-duplex, RTS inverted)",
+    ESP_LOGI(TAG, "RS-485 UART%d up: TX=%d RX=%d DE/RE=%d @ %d 8N1 (half-duplex, standard DE)",
              (int)cfg->port, cfg->tx_gpio, cfg->rx_gpio, cfg->de_re_gpio, cfg->baud_rate);
     return ESP_OK;
 }

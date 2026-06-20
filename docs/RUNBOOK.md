@@ -86,6 +86,37 @@ console is **USB-Serial-JTAG** (native USB). Treat "USB-CDC" in the Phase 3 head
 non-decision so far; pin explicitly if the 80 MHz bandwidth is ever needed (see Phase 3 review
 finding on implicit SPIRAM defaults).
 
+#### Attempt 2 — 2026-06-20 — PASS (re-validated on the CORRECT project board)
+
+**Board correction.** Attempt 1 was flashed to an ESP32-S3R8 with MAC `3c:dc:75:6f:89:24` —
+the operator subsequently identified that unit as **NOT the project board** (a second RAK3112
+whose pins are not broken out). The actual project board is a *different* RAK3112,
+MAC **`3c:dc:75:6f:85:dc`** (pins exposed), enumerating on the same native USB
+`/dev/cu.usbmodem1301`. Lesson reinforced: chip-id alone is insufficient when multiple
+same-silicon boards are on the bench — **match the MAC to the known project unit** before flash.
+
+Re-flashed the byte-identical Phase-3 firmware (same commit, `phase-3-first-flash-green`) to the
+correct board and re-captured. **All gate criteria PASS, identical to Attempt 1:**
+
+```
+rst:0x15 (USB_UART_CHIP_RESET),boot:0x28 (SPI_FAST_FLASH_BOOT)
+I (73) octal_psram: vendor id    : 0x0d (AP)
+I (74) octal_psram: VCC          : 0x01 (3V)
+I (75) esp_psram: Found 8MB PSRAM device
+I (807) esp_psram: SPI SRAM memory test OK
+I (819) esp_psram: Adding pool of 8192K of PSRAM memory to heap allocator
+I (832) app: reserved pins GPIO9/GPIO40 held floating (V1.2 I2C placeholder)
+rak3112-rs485-node alive: tick=0 .. tick=10   (1 Hz, monotonic, no bootloop)
+```
+
+`Found 8MB PSRAM device` ✅ · `Adding pool of 8192K … heap allocator` ✅ · Octal+3V
+(`vendor id 0x0d (AP)`, `VCC 0x01 (3V)`) = ESP32-S3R8 ✅ · `SPI SRAM memory test OK` ✅ ·
+GPIO9/40 floating ✅ · 1 Hz heartbeat, no `Brownout`/`panic`/`abort` ✅. The Phase 3 sign-off and
+tag `phase-3-first-flash-green` stand — same firmware, same PASS, now on the correct unit.
+
+**The project board is MAC `3c:dc:75:6f:85:dc` — use this MAC as the flash-target identity from
+Phase 4 onward** (the pins-exposed unit needed for RS-485 / SX1262 bring-up).
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

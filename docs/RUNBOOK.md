@@ -117,6 +117,74 @@ tag `phase-3-first-flash-green` stand — same firmware, same PASS, now on the c
 **The project board is MAC `3c:dc:75:6f:85:dc` — use this MAC as the flash-target identity from
 Phase 4 onward** (the pins-exposed unit needed for RS-485 / SX1262 bring-up).
 
+## Phase 4 — RS-485 echo: bench setup + attempts
+
+### Bench setup (HIL)
+
+- **Field wiring:** CN1 (3-pin) → USB-RS485 adapter: `A`↔`A`, `B`↔`B`, `GND`↔`GND`.
+- **Termination:** the board has **no on-board 120 Ω** (ADR-002). Fit **120 Ω across A/B at both
+  bus ends** — one at the adapter, one at the node (or, for the 9600 low-speed first pass on a
+  short stub, a single 120 Ω is tolerable). At 115200 use both.
+- **Fail-safe bias:** confirm idle line is quiet; if spurious RX bytes appear at idle, add bias at
+  one end (A→3V3 / B→GND via ~560 Ω–1 kΩ). R38/R39 (2.2 kΩ) may already provide this — verify.
+- **Logic analyzer:** Saleae Logic 2 on **GPIO21** (DE/RE) and the A/B pair; trigger on a TX burst.
+- **Project board only:** flash target **MAC `3c:dc:75:6f:85:dc`** (`/dev/cu.usbmodem1301`).
+
+### Two-pass gate (per ADR-002)
+
+1. `RS485_ECHO_BAUD = 9600`, build+flash, loop a 256-byte pattern from the adapter → byte-identical
+   echo, 0 framing errors, idle quiet.
+2. Change `RS485_ECHO_BAUD = 115200` in `firmware/main/app_main.c`, re-flash, repeat.
+3. Saleae: DE-assert→first-bit and last-bit→DE-release within TP8485E spec; no contention.
+
+### Attempt 1 — 2026-06-20 — on-target bring-up PASS (HIL echo pending bench gear)
+
+Firmware (UART1 half-duplex + inverted RTS) flashed to the project board (MAC `…85:dc`).
+On-target init verified from the boot log (bus not yet connected):
+
+```
+I (837) rs485: RS-485 UART1 up: TX=43 RX=44 DE/RE=21 @ 9600 8N1 (half-duplex, RTS inverted)
+I (5837) app: rs485 echo alive: 0 bytes echoed
+rak3112-rs485-node alive: tick=0 / tick=1   (5 s cadence)
+```
+
+`rs485_init()` (driver install + param + set_pin + RS485 half-duplex mode + RTS invert) returned
+ESP_OK — `ESP_ERROR_CHECK` did not abort. PSRAM + GPIO9/40 floating still nominal; no bootloop.
+Host `ctest` (ring_buffer, 6 checks) green. **HIL echo + DE/RE turnaround (9600 → 115200) held
+pending USB-RS485 adapter + Saleae on the bench.** Binary SHA-256
+`8fca54c7e23908108d3a15e9f4a2144836cf097a707f5b2a519fe2fd6d3bb225`.
+
+### Attempt 2 — 2026-06-20 — HIL echo PASS (DE/RE polarity was inverted in the spec)
+
+**Smoke gate PASS — byte-identical echo at both bauds**, driven host-side through a USB-RS485
+adapter (256-byte ramp pattern, 16-byte half-duplex bursts):
+
+| Baud | sent | echoed | identical |
+|---|---|---|---|
+| 9600 8N1 | 256 | 256 | **yes** |
+| 115200 8N1 | 256 | 256 | **yes** |
+
+**Root-cause lesson — believe the instrument, not the spec; and build a ground-truth detector
+early.** Bring-up burned many cycles chasing the adapter and A/B polarity (two adapters, both
+A/B orientations, RTS/DTR combos, a 5V jumper) — all red herrings. The break came from a
+*reliable detector*: reading the DUT's own RX counter over the (now-working) USB-Serial-JTAG
+console, then a toggle diagnostic that drove GPIO21 as a plain output alternating HIGH/LOW
+while listening. Result was unambiguous: **GPIO21 LOW → clean RX of the pattern; GPIO21 HIGH →
+nothing.** So DE/RE is **standard** (HIGH=TX, LOW=RX), *not* inverted.
+
+`ADR-001 EC-5a` had documented it inverted (`GPIO21 HIGH = receive`); `rs485.c` faithfully
+inverted RTS to match, which **idled U9 in transmit** — the node never listened and its driver
+contended with the partner (that's why earlier captures were empty or garbled). Fix:
+`uart_set_line_inverse(..., UART_SIGNAL_INV_DISABLE)` (no inversion). Corrected in firmware
+(ADR-002 rev2, `gpio_remap.h`, `PIN_MAP.md`) and hardware-side (ADR-001 EC-5a correction).
+
+Adapter note: once polarity was right, **Adapter 1 (CH340)** gave byte-identical echo at both
+bauds. Adapter 2 (FT232/75176) delivered no signal in this setup (separate, unresolved adapter
+issue) — not on the project's critical path.
+
+Saleae DE/RE turnaround characterization: deferred/optional — byte-identical echo at 115200
+(where turnaround margin is tightest) already demonstrates correct DE assert/deassert timing.
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

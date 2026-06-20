@@ -48,8 +48,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Verify scaffolding present
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure, build and run host ctest
         run: |
-          test -d tests/host
-          test -f tests/host/CMakeLists.txt
-          # Real ctest activation lands in Phase 4.
+          cmake -S tests/host -B tests/host/build -G Ninja
+          cmake --build tests/host/build
+          ctest --test-dir tests/host/build --output-on-failure

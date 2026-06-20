@@ -41,9 +41,10 @@
 #define PIN_RS485_TX GPIO_NUM_43 /* "GPIO43_TX" -> U9 D via R34, pin 7 */
 #define PIN_RS485_RX GPIO_NUM_44 /* "GPIO44_RX" -> U9 R,        pin 6 */
 
-/* RS-485 driver/receiver enable via Q6 inverter (ADR-001 EC-5a).
- * INVERTED polarity: GPIO21 HIGH = DE/RE LOW = RECEIVE; GPIO21 LOW = TRANSMIT.
- * First driven in Phase 4 — leave unconfigured in Phase 3. */
+/* RS-485 driver/receiver enable (DE/RE tied). STANDARD polarity — empirically
+ * confirmed on the project board (Phase 4, 2026-06-20): GPIO21 HIGH = TRANSMIT,
+ * GPIO21 LOW (idle) = RECEIVE. (ADR-001 EC-5a's "inverted, HIGH=receive" was wrong;
+ * see ADR-002 rev2.) Driven by the UART as non-inverted RTS in RS-485 half-duplex. */
 #define PIN_RS485_DE_RE GPIO_NUM_21 /* schematic net "GPIO21", pin 41 */
 
 /* ----------------------------------------------------------------------------

@@ -14,7 +14,7 @@
 | 38 | `GPIO38` | `PIN_WS2812_DIN` | WS2812 RGB DIN (U11) | Phase 3 (optional) | Addressable RGB status indicator |
 | 43 | `GPIO43_TX` | `PIN_RS485_TX` | RS-485 UART TX → U9 D (via R34) | Phase 4 | Console is USB-CDC, so UART is free for field bus |
 | 44 | `GPIO44_RX` | `PIN_RS485_RX` | RS-485 UART RX ← U9 R | Phase 4 | — |
-| 21 | `GPIO21` | `PIN_RS485_DE_RE` | RS-485 DE/RE via Q6 | Phase 4 | **INVERTED**: HIGH = DE/RE LOW = RECEIVE; LOW = TRANSMIT (ADR-001 EC-5a) |
+| 21 | `GPIO21` | `PIN_RS485_DE_RE` | RS-485 DE/RE | Phase 4 | **STANDARD** polarity (measured 2026-06-20): HIGH = TRANSMIT, LOW (idle) = RECEIVE. ADR-001 EC-5a's "inverted" was wrong — see ADR-002 rev2 |
 | 0 | `BOOT` | `PIN_BOOT_SW2` | Boot-mode strap / SW2 | — (never driven) | HIGH at reset = normal SPI boot |
 
 ## Strapping / module-internal — DO NOT DRIVE (project CLAUDE.md §3 #2)

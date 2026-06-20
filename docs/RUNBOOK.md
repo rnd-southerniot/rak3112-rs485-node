@@ -2,6 +2,104 @@
 
 Operational log for `rak3112-rs485-node` firmware. Append-only.
 
+## Phase 3 bench checklist + hardware-safety pre-flight
+
+> Run through this **before every flash/monitor** on real hardware (project CLAUDE.md §3,
+> firmware domain CLAUDE.md §6). If any item is unknown — **stop and ask**.
+
+1. **H1 jumper INSTALLED** (series 3V3-enable header between RT6160 VOUT and the 3V3 rail).
+   A removed jumper cuts 3V3 to the module → board does **not** enumerate on USB and looks
+   "not detected" (easy to misdiagnose as a USB/bootloader fault). — ADR-001 EC-5b.
+2. **Power:** USB-C (`USB1`) supplies logic via RT6160. Do **not** simultaneously connect the
+   DC1 barrel jack and a bench supply without first verifying RT6160 input isolation (§3 #7).
+3. **Strap pins:** GPIO0 (SW2/BOOT) is pulled HIGH internally → normal SPI boot; do **not**
+   hold SW2 for a normal boot. GPIO45/46 are module-internal / NC — never driven. To force
+   download mode (only if `idf.py flash` auto-reset fails): hold SW2, tap SW1, release SW2.
+4. **No mass-erase.** `esptool erase_flash` stays gated (§3 #1). Flash is `idf.py flash` /
+   `scripts/flash.sh flash` only.
+5. **Target verification before flash:** `ls /dev/tty.usbmodem*` then `scripts/flash.sh chip-id`
+   → expect **ESP32-S3**. Confirm before writing.
+
+### PASS evidence to capture (quote verbatim here on a green run)
+
+- `Found 8MB PSRAM device` within ~2 s of reset, **and**
+- `Adding pool of NNNN KiB of PSRAM memory to heap allocator` in heap-init, **and**
+- `rak3112-rs485-node alive: tick=N` incrementing at 1 Hz, **and**
+- no bootloop, no `Brownout detector was triggered`, no spurious ROM print on UART0.
+
+### Phase 3 attempts
+
+#### Attempt 1 — 2026-06-20 — PASS (console finding: USB_CDC → USB_SERIAL_JTAG)
+
+**Bench:** two boards connected. Target disambiguated by chip-id/MAC **before** every flash
+(Guardrail §3 #1):
+- `/dev/cu.usbmodem1301` = **ESP32-S3 (QFN56) rev v0.2, Embedded PSRAM 8MB (AP_3v3)**,
+  MAC `3c:dc:75:6f:89:24` → **RAK3112** (target), on its **native USB**.
+- `/dev/cu.usbserial-140` = **ESP32-P4**, MAC `30:ed:a0:e1:8e:1c` → unrelated board on a
+  USB-UART bridge. Never flashed.
+
+**Console finding (the substantive Phase 3 result).** The Phase-1 default
+`CONFIG_ESP_CONSOLE_USB_CDC=y` (OTG/TinyUSB) produced **no visible console** on the RAK3112's
+native USB — 0 bytes via raw read *and* via `idf.py monitor`, while the app ran fine (port
+stable, no bootloop). The RAK3112 native USB (`USB_D±`) is the ESP32-S3 **USB-Serial-JTAG**
+controller — the same interface esptool flashes over. Switching to
+`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` made the console fully visible. This supersedes the
+Phase-1 USB_CDC choice in `sdkconfig.defaults`.
+
+Also captured during the investigation: a stale/wedged USB endpoint (`errno 6 Device not
+configured`) was cleared by a physical replug + carrier swap; macOS `/dev/cu.*` (call-out)
+must be used for reading, not `/dev/tty.*` (dial-in, blocks on carrier).
+
+**PASS evidence (verbatim boot log, USB-Serial-JTAG @ 115200):**
+
+```
+rst:0x15 (USB_UART_CHIP_RESET),boot:0x2a (SPI_FAST_FLASH_BOOT)
+I (24) boot: ESP-IDF v5.5.4-dirty 2nd stage bootloader
+I (25) boot.esp32s3: Boot SPI Speed : 80MHz   SPI Mode : DIO   SPI Flash Size : 16MB
+I (73) octal_psram: vendor id    : 0x0d (AP)
+I (74) octal_psram: VCC          : 0x01 (3V)
+I (75) esp_psram: Found 8MB PSRAM device
+I (76) esp_psram: Speed: 40MHz
+I (807) esp_psram: SPI SRAM memory test OK
+I (816) cpu_start: Pro cpu start user code
+I (816) app_init: Project name:     rak3112_rs485_node
+I (819) esp_psram: Adding pool of 8192K of PSRAM memory to heap allocator
+I (832) app: reserved pins GPIO9/GPIO40 held floating (V1.2 I2C placeholder)
+rak3112-rs485-node alive: tick=0
+rak3112-rs485-node alive: tick=1
+...
+rak3112-rs485-node alive: tick=10
+```
+
+**Gate result — all PASS:**
+- `Found 8MB PSRAM device` present within ~75 ms of reset ✅
+- `Adding pool of 8192K of PSRAM memory to heap allocator` present ✅
+- Octal mode + 3 V confirmed empirically (`octal_psram vendor id 0x0d (AP)`, `VCC 0x01 (3V)`) —
+  matches ADR-001 EC-6 (ESP32-S3R8) ✅
+- `SPI SRAM memory test OK` ✅
+- GPIO9/GPIO40 floating-init log present ✅ (ADR-001 EC-4/EC-9 carry-forward)
+- Heartbeat 1 Hz, monotonic, **no bootloop**, single `rst:0x15`, no `Brownout`/`panic`/`abort` ✅
+
+**Carry-forward note for the contract:** Phase 3 title says "USB-CDC console"; the verified
+console is **USB-Serial-JTAG** (native USB). Treat "USB-CDC" in the Phase 3 heading as
+"native-USB console". `CONFIG_SPIRAM_SPEED` defaults to 40 MHz (Octal) — a deliberate
+non-decision so far; pin explicitly if the 80 MHz bandwidth is ever needed (see Phase 3 review
+finding on implicit SPIRAM defaults).
+
+## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
+
+After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the
+signed-off `ADR-001-pin-map.md`: a **duplicate** "## H1 header purpose (EC-5b)" stub still
+showing `> Status: <TBD> — pending EC-5 execution` directly below the canonical, fully-resolved
+EC-5b section. The firmware EC-9 precondition required the ADR be "free of `<TBD>` markers", so
+this was a technical violation rolled forward from the sign-off commit.
+
+Fixed in hardware repo `main` (merge `3cce0c6`, fix `65ddab0`) — the duplicate stub was removed;
+the binding decision (H1 = 3V3-enable / current-measurement jumper) was unchanged and already
+present in the canonical section. The `adr-001-locked` tag was **not** moved (it is pushed; the
+decision did not change), so the firmware `HARDWARE_REV.md` pin (`a0b002ca…8295`) remains valid.
+No firmware behavior is affected.
+
 ## Phase 2 attempts
 
 ### EC-1 — 2026-05-01 — PASS (vendored IAD only; PARLIO held back)

@@ -185,6 +185,41 @@ issue) — not on the project's critical path.
 Saleae DE/RE turnaround characterization: deferred/optional — byte-identical echo at 115200
 (where turnaround margin is tightest) already demonstrates correct DE assert/deassert timing.
 
+## Phase 5 — LoRaWAN OTAA (AS923): attempts
+
+### 5a — 2026-06-20 — SX1262 SPI bring-up PASS (pins confirmed, NO TX)
+
+**Finding (research): ADR-001's SX1262 SPI pins were wrong.** ADR-001 labelled the module-edge
+`GPIO10–13 / SPI_*` pins as the SX1262 SPI. Those are a **separate user SPI**; the radio is on a
+different **module-internal** bus. Triangulated from RAK3112 datasheet + RAK forum (carlrowan
+RadioLib config) + Zephyr `rak3112` DTS — all agree:
+
+| SX1262 | GPIO | | SX1262 | GPIO |
+|---|---|---|---|---|
+| NSS/CS | 7 | | BUSY | 48 |
+| SCK | 5 | | DIO1 (IRQ) | 47 |
+| MOSI | 6 | | NRESET | 8 (open-drain) |
+| MISO | 3 | | ANT_SW | 4 (active-low) |
+
+RF switch driven by SX1262 **DIO2** (`setDio2AsRfSwitch`), TCXO by **DIO3** — both SPI-internal,
+not MCU pins. (GPIO3 is a JTAG-source strap at reset but free post-boot = MISO.)
+
+**Bench confirmation (no-TX SPI probe, no antenna — safe).** Probe: SPI2 on the pins above,
+hardware reset, then GetStatus + register write/read round-trip. Console (project board MAC
+`3c:dc:75:6f:85:dc`):
+
+```
+lora_probe: SX1262 probe: NSS=7 SCK=5 MOSI=6 MISO=3 RST=8 BUSY=48 DIO1=47
+lora_probe: post-reset BUSY=0
+lora_probe: GetStatus=0x2a  regRW[wab:rab w55:r55 w12:r12 ] => SPI OK -> pins CONFIRMED
+```
+
+`BUSY=0` after reset, `GetStatus=0x2a` (chip mode = STBY_RC, sane post-reset), and all three
+register write/read pairs matched → **SPI comms confirmed, pins correct.** Zero RF emitted.
+Pins locked in `gpio_remap.h`; ADR-001 SX1262 pin map corrected hw-side. **Stack = RadioLib**
+(native ESP-IDF, ADR-003). **5b (OTAA join, RF TX) held pending a 50 Ω antenna/dummy load** and
+go-ahead to register a test DevEUI on ChirpStack `10.10.8.140`.
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

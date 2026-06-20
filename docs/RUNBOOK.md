@@ -220,6 +220,32 @@ Pins locked in `gpio_remap.h`; ADR-001 SX1262 pin map corrected hw-side. **Stack
 (native ESP-IDF, ADR-003). **5b (OTAA join, RF TX) held pending a 50 Ω antenna/dummy load** and
 go-ahead to register a test DevEUI on ChirpStack `10.10.8.140`.
 
+### 5b-prov — 2026-06-20 — CRM provisioning COMPLETE (device registered in ChirpStack)
+
+Provisioned the node **end-to-end through the SCOMM CRM** (system of record) per the firmware↔CRM
+handoff contract — not by hitting ChirpStack directly. Tool: `tools/provision_node.py` (chains
+the workflow API; reads CRM creds from `~/.config/siot/rak3112-crm.env`, DevEUI/AppKey from the
+gitignored `firmware/.env`). CRM repo: `rnd-southerniot/siot-crm-review`.
+
+- **DevEUI** `3cdc75fffe6f85dc` — derived from the ESP32-S3 MAC `3c:dc:75:6f:85:dc` (EUI-64,
+  fffe-inserted) → deterministic / re-provisionable. **JoinEUI** `0000…0`. **AppKey** generated
+  (16 B, in `firmware/.env`, gitignored — never logged/committed; gitleaks clean).
+- CRM product `RAK3112-RS485-AS923` (`isLorawanProduct`, AS923) created + SOP template; onboarding
+  task walked SCHEDULED_VISIT → REQUIREMENTS_COMPLETE → HARDWARE_PROCUREMENT_COMPLETE →
+  HARDWARE_PREPARED_COMPLETE (DevEUI/AppKey in `deviceList`) → checklist → READY_FOR_INSTALLATION.
+- **Result:** CRM `lorawanProvisioningStatus=COMPLETED`; `GET /chirpstack/device/3cdc75fffe6f85dc`
+  → `found=true`, name `RAK3112-RS485-6F85DC`, on AS923 OTAA app `9dcd1954…` + device profile
+  `80b53d57…`. Device is ready for OTAA join (ADR-004 = AS923-1).
+
+Contract gotchas captured (vs the handoff note / agent contract): SOP-template POST needs
+`productId` in the body + steps with `id/title/description/order`; READY_FOR_INSTALLATION takes
+an **empty** body (whitelist rejects lat/long). Used the seeded ADMIN account (passes all role
+gates). **Security flag:** the production CRM's seeded admin/role passwords are hardcoded in the
+**public** `siot-crm-review` `prisma/seed.ts` — recommend rotating + moving to env (global §8).
+
+Still pending for the actual join (RF TX): RadioLib firmware integration, **50 Ω antenna**, and
+**TCXO voltage confirm** (1.6 V vs 1.8 V, ADR-003 open item).
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

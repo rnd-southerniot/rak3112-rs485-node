@@ -27,6 +27,21 @@
 #define ESP_HAL_S3_SPI_HOST SPI2_HOST
 #define ESP_HAL_S3_SPI_HZ (2 * 1000 * 1000)
 
+/*
+ * DIO1 interrupt trampoline. RadioLib's callback is `void(*)(void)`, but the ESP-IDF GPIO ISR
+ * handler is `void(*)(void*)`. The previous code cast one to the other — undefined behaviour that
+ * (empirically) dropped the TxDone interrupt on data uplinks (-5 TX_TIMEOUT) while the join
+ * happened to tolerate it. Route through a matching-signature trampoline, and install the ISR
+ * service WITHOUT ESP_INTR_FLAG_IRAM so a flash-resident RadioLib callback is safe to call.
+ */
+static void (*s_radiolib_dio_cb)(void) = nullptr;
+static void esphals3_dio_isr(void *arg)
+{
+    (void)arg;
+    if (s_radiolib_dio_cb)
+        s_radiolib_dio_cb();
+}
+
 class EspHalS3 : public RadioLibHal
 {
   public:
@@ -97,13 +112,14 @@ class EspHalS3 : public RadioLibHal
             return;
         static bool isrInstalled = false;
         if (!isrInstalled) {
-            gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+            gpio_install_isr_service(0); /* no IRAM flag — RadioLib callback lives in flash */
             isrInstalled = true;
         }
+        s_radiolib_dio_cb = cb;
         gpio_set_intr_type((gpio_num_t)irq, (mode == RISING)    ? GPIO_INTR_POSEDGE
                                             : (mode == FALLING) ? GPIO_INTR_NEGEDGE
                                                                 : GPIO_INTR_ANYEDGE);
-        gpio_isr_handler_add((gpio_num_t)irq, (gpio_isr_t)(void *)cb, nullptr);
+        gpio_isr_handler_add((gpio_num_t)irq, esphals3_dio_isr, nullptr);
     }
 
     void detachInterrupt(uint32_t irq) override

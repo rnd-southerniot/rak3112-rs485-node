@@ -268,10 +268,17 @@ C++ `lora.cpp` behind a C API (`lora.h`) for `app_main.c`. Antenna attached.
 fresh `NEW_SESSION` and on `SESSION_RESTORED`). It fails in ~190 ms — too fast for an SF9 ToA
 timeout, so it's **not** data-rate/ToA (forcing DR3+ADR-off did not help), and not nonce/session
 (the session is valid). The join's TX gets its TxDone, but the data-uplink TX does not — prime
-suspect is the vendored `EspHalS3` DIO1 ISR path (function-pointer cast / `ESP_INTR_FLAG_IRAM`
-flag with a non-IRAM RadioLib callback), flagged as untested by the integration research.
-Next debug step: re-examine the HAL `attachInterrupt`/ISR (drop IRAM flag, add an IRAM trampoline),
-and confirm DIO1 edges on the data TX with the Saleae. Whether the frame physically goes out
+suspect was the vendored `EspHalS3` DIO1 ISR path. **ISR FIXED** (proper `void(void*)` trampoline
+instead of the UB function-pointer cast; ISR service installed without `ESP_INTR_FLAG_IRAM`) — a
+real latent bug, but it did NOT clear the -5. **Refined root cause (from RadioLib source):**
+`LoRaWANNode::transmitUplink` (LoRaWAN.cpp:1531) does NOT use the ISR — it **polls
+`digitalRead(DIO1/GPIO47)`** for TxDone after `sleepDelay(ToA)`, and times out at `txEnd +
+scanGuard`. The radio's TX is staged + launched without error (the `RADIOLIB_ASSERT`s pass), but
+**TxDone never asserts on the data uplink** — while the join's TX (same polling path) did. So the
+SetTx is accepted but the transmit doesn't complete/assert DIO1 on the data frame specifically.
+Next debug step: enable `RADIOLIB_DEBUG_PROTOCOL`/`_BASIC` to capture the uplink's actual DR / ToA /
+TX power / channel and where it diverges from the join, and scope GPIO47 (+ the RF) on a data TX.
+Whether the frame physically goes out
 (ChirpStack frame log) couldn't be checked — the CRM `/chirpstack/device` endpoint returns device
 config only (no last-seen/fcnt/frames). **Phase 5 not signed off until an uplink frame lands.**
 

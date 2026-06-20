@@ -1,0 +1,4 @@
+## ESP-IDF component manager dependencies (Phase 5, ADR-003).
+dependencies:
+  idf: ">=5.5.0"
+  jgromes/radiolib: "==7.7.1"

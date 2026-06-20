@@ -246,6 +246,35 @@ gates). **Security flag:** the production CRM's seeded admin/role passwords are 
 Still pending for the actual join (RF TX): RadioLib firmware integration, **50 Ω antenna**, and
 **TCXO voltage confirm** (1.6 V vs 1.8 V, ADR-003 open item).
 
+### 5b-fw — 2026-06-20 — OTAA JOIN SUCCESS; data uplink TxDone open
+
+RadioLib 7.7.1 integrated as a native ESP-IDF managed component (`firmware/main/idf_component.yml`)
+with a vendored S3 HAL (`EspHalS3.h`) — **the bundled `EspHal.h` is ESP32-classic only and
+`#error`s on S3** (it bit-bangs classic SPI registers); reimplemented on `spi_master`/`gpio`.
+C++ `lora.cpp` behind a C API (`lora.h`) for `app_main.c`. Antenna attached.
+
+- **TCXO = 1.8 V works** (first try; `radio.begin(..., 1.8f, false)`), `setDio2AsRfSwitch(true)`.
+- **OTAA JOIN SUCCESS** at AS923-1 on the project board (DevEUI `3cdc75fffe6f85dc`):
+  `JOINED AS923 (new session)` — RadioLib received the JoinAccept, i.e. ChirpStack
+  (`10.10.8.140`) accepted our JoinRequest (AppKey valid) and downlinked the accept. **Full RF
+  TX+RX round-trip + the device is live on the network.**
+- **DevNonce persistence (NVS)** added and verified: first boot's join used DevNonce ~0;
+  reboots without persistence failed `-1116` (no-join-accept — ChirpStack rejects reused/lower
+  DevNonce). Persisting the nonces buffer after every attempt makes DevNonce climb monotonically
+  → re-join succeeded on the next attempt; session is also persisted/restored
+  (`session restored (no re-join)` on subsequent boots, instant).
+
+**OPEN — data uplink `sendReceive` returns `-5 RADIOLIB_ERR_TX_TIMEOUT`** (consistent, both on a
+fresh `NEW_SESSION` and on `SESSION_RESTORED`). It fails in ~190 ms — too fast for an SF9 ToA
+timeout, so it's **not** data-rate/ToA (forcing DR3+ADR-off did not help), and not nonce/session
+(the session is valid). The join's TX gets its TxDone, but the data-uplink TX does not — prime
+suspect is the vendored `EspHalS3` DIO1 ISR path (function-pointer cast / `ESP_INTR_FLAG_IRAM`
+flag with a non-IRAM RadioLib callback), flagged as untested by the integration research.
+Next debug step: re-examine the HAL `attachInterrupt`/ISR (drop IRAM flag, add an IRAM trampoline),
+and confirm DIO1 edges on the data TX with the Saleae. Whether the frame physically goes out
+(ChirpStack frame log) couldn't be checked — the CRM `/chirpstack/device` endpoint returns device
+config only (no last-seen/fcnt/frames). **Phase 5 not signed off until an uplink frame lands.**
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

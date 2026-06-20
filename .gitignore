@@ -44,3 +44,6 @@ __pycache__/
 # Per-board LoRaWAN provisioning secrets (DevEUI/AppKey) — never commit
 firmware/.env
 firmware/.env.*
+
+# Generated LoRaWAN credentials header (contains AppKey) — never commit
+firmware/main/lora_credentials.h

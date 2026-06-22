@@ -313,8 +313,17 @@ Binary SHA-256 `38105b4eaa218685a218a2505b3d2af7c5de2cc4e3b9dfd03fe926e32f9b9f9a
 
 **Lesson:** RadioLib LoRaWAN on ESP-IDF needs a 1 kHz FreeRTOS tick — its TX-done guard and RX
 window timing assume ~ms scheduling granularity; the 100 Hz default silently breaks sub-tick
-waits. **Still open for Phase 5 sign-off:** confirm the frames land in the ChirpStack frame log
-(`10.10.8.140`) — the firmware now reports success, but end-to-end frame arrival is a separate check.
+waits.
+
+**END-TO-END CONFIRMED (2026-06-22):** uplink frame captured in the ChirpStack frame log
+(`10.10.8.140:8080` UI). `UnconfirmedDataUp`, DevAddr `01db1032`, **fPort 1**, frm_payload
+**`a500245a`** (= `A5 00 24 5A`, our `{0xA5,n>>8,n,0x5A}` with n=36), **fCnt 98** (advancing,
+NVS-persisted), ADR off, **SF9/BW125/CR4_5 = DR3** on **923.4 MHz**, region `as923_1`,
+`CRC_OK`, RSSI −48 dBm, SNR +12.2 dB via gateway `ac1f09fffe1f340d`. Every field matches the
+firmware config — the uplink path is fully working end-to-end. The CRM `/chirpstack/device`
+endpoint (`:4000`) returns config only (no telemetry); frame verification must use the
+ChirpStack UI/API at `:8080` directly. **Phase 5 uplink milestone: PASS.** (Remaining Phase 5
+sign-off scope — ADR-003 stack / ADR-004 sub-band formal close, payload schema — tracked separately.)
 
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 

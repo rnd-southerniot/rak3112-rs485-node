@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "siot-mcp-gateway": {
+      "type": "http",
+      "url": "http://10.10.8.113:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SIOT_MCP_GATEWAY_TOKEN}"
+      }
+    }
+  }
+}

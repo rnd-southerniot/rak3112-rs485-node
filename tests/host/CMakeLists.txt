@@ -20,4 +20,12 @@ target_include_directories(test_ring_buffer PRIVATE
 )
 add_test(NAME ring_buffer COMMAND test_ring_buffer)
 
-# Real tests land per phase: Phase 4 framing (ring_buffer, above), Phase 6 Modbus parser.
+# Phase 6: modbus_rtu (RTU master framing — CRC16, request build, response/exception parse).
+add_executable(test_modbus_rtu
+    test_modbus_rtu.c
+    ${FW_ROOT}/components/modbus/modbus_rtu.c
+)
+target_include_directories(test_modbus_rtu PRIVATE
+    ${FW_ROOT}/components/modbus/include
+)
+add_test(NAME modbus_rtu COMMAND test_modbus_rtu)

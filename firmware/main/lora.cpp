@@ -5,7 +5,16 @@
 #include "EspHalS3.h"
 #include "esp_log.h"
 #include "gpio_remap.h"
+/* Real credentials header is gitignored (holds the AppKey secret, generated from firmware/.env).
+ * Fall back to the committed placeholder template when it's absent (clean clone / CI build-check)
+ * so the project always builds; placeholder creds cannot join a network. */
+#if defined(__has_include) && __has_include("lora_credentials.h")
 #include "lora_credentials.h"
+#else
+#pragma message(                                                                                   \
+    "lora_credentials.h not found — using PLACEHOLDER OTAA creds (build-check only; copy lora_credentials.h.example to lora_credentials.h and fill real keys to join)")
+#include "lora_credentials.h.example"
+#endif
 #include "nvs.h"
 #include "nvs_flash.h"
 

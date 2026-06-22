@@ -185,6 +185,146 @@ issue) — not on the project's critical path.
 Saleae DE/RE turnaround characterization: deferred/optional — byte-identical echo at 115200
 (where turnaround margin is tightest) already demonstrates correct DE assert/deassert timing.
 
+## Phase 5 — LoRaWAN OTAA (AS923): attempts
+
+### 5a — 2026-06-20 — SX1262 SPI bring-up PASS (pins confirmed, NO TX)
+
+**Finding (research): ADR-001's SX1262 SPI pins were wrong.** ADR-001 labelled the module-edge
+`GPIO10–13 / SPI_*` pins as the SX1262 SPI. Those are a **separate user SPI**; the radio is on a
+different **module-internal** bus. Triangulated from RAK3112 datasheet + RAK forum (carlrowan
+RadioLib config) + Zephyr `rak3112` DTS — all agree:
+
+| SX1262 | GPIO | | SX1262 | GPIO |
+|---|---|---|---|---|
+| NSS/CS | 7 | | BUSY | 48 |
+| SCK | 5 | | DIO1 (IRQ) | 47 |
+| MOSI | 6 | | NRESET | 8 (open-drain) |
+| MISO | 3 | | ANT_SW | 4 (active-low) |
+
+RF switch driven by SX1262 **DIO2** (`setDio2AsRfSwitch`), TCXO by **DIO3** — both SPI-internal,
+not MCU pins. (GPIO3 is a JTAG-source strap at reset but free post-boot = MISO.)
+
+**Bench confirmation (no-TX SPI probe, no antenna — safe).** Probe: SPI2 on the pins above,
+hardware reset, then GetStatus + register write/read round-trip. Console (project board MAC
+`3c:dc:75:6f:85:dc`):
+
+```
+lora_probe: SX1262 probe: NSS=7 SCK=5 MOSI=6 MISO=3 RST=8 BUSY=48 DIO1=47
+lora_probe: post-reset BUSY=0
+lora_probe: GetStatus=0x2a  regRW[wab:rab w55:r55 w12:r12 ] => SPI OK -> pins CONFIRMED
+```
+
+`BUSY=0` after reset, `GetStatus=0x2a` (chip mode = STBY_RC, sane post-reset), and all three
+register write/read pairs matched → **SPI comms confirmed, pins correct.** Zero RF emitted.
+Pins locked in `gpio_remap.h`; ADR-001 SX1262 pin map corrected hw-side. **Stack = RadioLib**
+(native ESP-IDF, ADR-003). **5b (OTAA join, RF TX) held pending a 50 Ω antenna/dummy load** and
+go-ahead to register a test DevEUI on ChirpStack `10.10.8.140`.
+
+### 5b-prov — 2026-06-20 — CRM provisioning COMPLETE (device registered in ChirpStack)
+
+Provisioned the node **end-to-end through the SCOMM CRM** (system of record) per the firmware↔CRM
+handoff contract — not by hitting ChirpStack directly. Tool: `tools/provision_node.py` (chains
+the workflow API; reads CRM creds from `~/.config/siot/rak3112-crm.env`, DevEUI/AppKey from the
+gitignored `firmware/.env`). CRM repo: `rnd-southerniot/siot-crm-review`.
+
+- **DevEUI** `3cdc75fffe6f85dc` — derived from the ESP32-S3 MAC `3c:dc:75:6f:85:dc` (EUI-64,
+  fffe-inserted) → deterministic / re-provisionable. **JoinEUI** `0000…0`. **AppKey** generated
+  (16 B, in `firmware/.env`, gitignored — never logged/committed; gitleaks clean).
+- CRM product `RAK3112-RS485-AS923` (`isLorawanProduct`, AS923) created + SOP template; onboarding
+  task walked SCHEDULED_VISIT → REQUIREMENTS_COMPLETE → HARDWARE_PROCUREMENT_COMPLETE →
+  HARDWARE_PREPARED_COMPLETE (DevEUI/AppKey in `deviceList`) → checklist → READY_FOR_INSTALLATION.
+- **Result:** CRM `lorawanProvisioningStatus=COMPLETED`; `GET /chirpstack/device/3cdc75fffe6f85dc`
+  → `found=true`, name `RAK3112-RS485-6F85DC`, on AS923 OTAA app `9dcd1954…` + device profile
+  `80b53d57…`. Device is ready for OTAA join (ADR-004 = AS923-1).
+
+Contract gotchas captured (vs the handoff note / agent contract): SOP-template POST needs
+`productId` in the body + steps with `id/title/description/order`; READY_FOR_INSTALLATION takes
+an **empty** body (whitelist rejects lat/long). Used the seeded ADMIN account (passes all role
+gates). **Security flag:** the production CRM's seeded admin/role passwords are hardcoded in the
+**public** `siot-crm-review` `prisma/seed.ts` — recommend rotating + moving to env (global §8).
+
+Still pending for the actual join (RF TX): RadioLib firmware integration, **50 Ω antenna**, and
+**TCXO voltage confirm** (1.6 V vs 1.8 V, ADR-003 open item).
+
+### 5b-fw — 2026-06-20 — OTAA JOIN SUCCESS; data uplink TxDone open
+
+RadioLib 7.7.1 integrated as a native ESP-IDF managed component (`firmware/main/idf_component.yml`)
+with a vendored S3 HAL (`EspHalS3.h`) — **the bundled `EspHal.h` is ESP32-classic only and
+`#error`s on S3** (it bit-bangs classic SPI registers); reimplemented on `spi_master`/`gpio`.
+C++ `lora.cpp` behind a C API (`lora.h`) for `app_main.c`. Antenna attached.
+
+- **TCXO = 1.8 V works** (first try; `radio.begin(..., 1.8f, false)`), `setDio2AsRfSwitch(true)`.
+- **OTAA JOIN SUCCESS** at AS923-1 on the project board (DevEUI `3cdc75fffe6f85dc`):
+  `JOINED AS923 (new session)` — RadioLib received the JoinAccept, i.e. ChirpStack
+  (`10.10.8.140`) accepted our JoinRequest (AppKey valid) and downlinked the accept. **Full RF
+  TX+RX round-trip + the device is live on the network.**
+- **DevNonce persistence (NVS)** added and verified: first boot's join used DevNonce ~0;
+  reboots without persistence failed `-1116` (no-join-accept — ChirpStack rejects reused/lower
+  DevNonce). Persisting the nonces buffer after every attempt makes DevNonce climb monotonically
+  → re-join succeeded on the next attempt; session is also persisted/restored
+  (`session restored (no re-join)` on subsequent boots, instant).
+
+**OPEN — data uplink `sendReceive` returns `-5 RADIOLIB_ERR_TX_TIMEOUT`** (consistent, both on a
+fresh `NEW_SESSION` and on `SESSION_RESTORED`). It fails in ~190 ms — too fast for an SF9 ToA
+timeout, so it's **not** data-rate/ToA (forcing DR3+ADR-off did not help), and not nonce/session
+(the session is valid). The join's TX gets its TxDone, but the data-uplink TX does not — prime
+suspect was the vendored `EspHalS3` DIO1 ISR path. **ISR FIXED** (proper `void(void*)` trampoline
+instead of the UB function-pointer cast; ISR service installed without `ESP_INTR_FLAG_IRAM`) — a
+real latent bug, but it did NOT clear the -5. **Refined root cause (from RadioLib source):**
+`LoRaWANNode::transmitUplink` (LoRaWAN.cpp:1531) does NOT use the ISR — it **polls
+`digitalRead(DIO1/GPIO47)`** for TxDone after `sleepDelay(ToA)`, and times out at `txEnd +
+scanGuard`. The radio's TX is staged + launched without error (the `RADIOLIB_ASSERT`s pass), but
+**TxDone never asserts on the data uplink** — while the join's TX (same polling path) did. So the
+SetTx is accepted but the transmit doesn't complete/assert DIO1 on the data frame specifically.
+Next debug step: enable `RADIOLIB_DEBUG_PROTOCOL`/`_BASIC` to capture the uplink's actual DR / ToA /
+TX power / channel and where it diverges from the join, and scope GPIO47 (+ the RF) on a data TX.
+Whether the frame physically goes out
+(ChirpStack frame log) couldn't be checked — the CRM `/chirpstack/device` endpoint returns device
+config only (no last-seen/fcnt/frames). **Phase 5 not signed off until an uplink frame lands.**
+
+### 5c — 2026-06-22 — data uplink `-5` FIXED (100 Hz FreeRTOS tick was the root cause)
+
+**Fix: `CONFIG_FREERTOS_HZ=1000` in `sdkconfig.defaults`.** Single change; bench-verified.
+
+The 5b-fw "refined root cause" (TxDone never asserts on the data frame specifically) was a
+misread — and so was "fails in ~190 ms, too fast for an SF9 ToA timeout, so not data-rate." The
+fast failure *is* the tell. `LoRaWANNode::transmitUplink` waits with `sleepDelay(toa)` then polls
+`digitalRead(DIO1)` until `millis() > txEnd + scanGuard`, and **`scanGuard = 10 ms`**
+(LoRaWAN.h:990). At the ESP-IDF default **100 Hz tick (10 ms)**:
+
+- `sleepDelay(toa)` → `vTaskDelay(pdMS_TO_TICKS(toa))` quantizes/undershoots the air-time by up
+  to one tick (≈10 ms), so the poll starts *before* the real TxDone; and
+- `millis()` advances in 10 ms steps and the guard is exactly **1 tick**, so `txEnd + 10 ms` is
+  reached almost immediately → `-5` in ~one tick. That's why it "failed too fast" and why forcing
+  DR3/ADR-off did nothing — it was never a DR/ToA problem.
+
+At **1000 Hz**: `sleepDelay` is accurate to ~1 ms and the 10 ms guard is 10 ticks of real poll
+window → DIO1 is caught every time. (The join tolerated 100 Hz because `app_main` retries the
+join 5× and its longer-ToA timing occasionally aligned; the periodic data uplink had no such
+retry, so it failed every cycle.) The earlier DIO1-ISR-trampoline fix (5b-fw) was a real latent
+bug on the **downlink** ISR path and is kept — it just wasn't this bug.
+
+**Bench evidence (project board, S3R8, MAC `3c:dc:75:6f:85:dc`, `/dev/cu.usbmodem1401`):**
+`idf.py flash` of the 1 kHz build, then **4/4 consecutive `uplink OK (rx window=0)`** at uptimes
+65 s / 128 s / 190 s / 252 s, **zero `-5`** — replacing the previously consistent `uplink failed
+(-5)`. `rx window=0` = uplink sent, no downlink pending (correct for an unconfirmed uplink).
+Binary SHA-256 `38105b4eaa218685a218a2505b3d2af7c5de2cc4e3b9dfd03fe926e32f9b9f9a`, `IDF_VER=v5.5.4-dirty`
+(local PARLIO mod, off-compile-path, Footnote 1).
+
+**Lesson:** RadioLib LoRaWAN on ESP-IDF needs a 1 kHz FreeRTOS tick — its TX-done guard and RX
+window timing assume ~ms scheduling granularity; the 100 Hz default silently breaks sub-tick
+waits.
+
+**END-TO-END CONFIRMED (2026-06-22):** uplink frame captured in the ChirpStack frame log
+(`10.10.8.140:8080` UI). `UnconfirmedDataUp`, DevAddr `01db1032`, **fPort 1**, frm_payload
+**`a500245a`** (= `A5 00 24 5A`, our `{0xA5,n>>8,n,0x5A}` with n=36), **fCnt 98** (advancing,
+NVS-persisted), ADR off, **SF9/BW125/CR4_5 = DR3** on **923.4 MHz**, region `as923_1`,
+`CRC_OK`, RSSI −48 dBm, SNR +12.2 dB via gateway `ac1f09fffe1f340d`. Every field matches the
+firmware config — the uplink path is fully working end-to-end. The CRM `/chirpstack/device`
+endpoint (`:4000`) returns config only (no telemetry); frame verification must use the
+ChirpStack UI/API at `:8080` directly. **Phase 5 uplink milestone: PASS.** (Remaining Phase 5
+sign-off scope — ADR-003 stack / ADR-004 sub-band formal close, payload schema — tracked separately.)
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

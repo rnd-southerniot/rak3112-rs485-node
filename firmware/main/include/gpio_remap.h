@@ -48,12 +48,36 @@
 #define PIN_RS485_DE_RE GPIO_NUM_21 /* schematic net "GPIO21", pin 41 */
 
 /* ----------------------------------------------------------------------------
+ * SX1262 LoRa radio (module-internal SPI bus) — Phase 5.
+ * CONFIRMED on the project board 2026-06-20 (no-TX SPI probe, 5a): hardware reset +
+ * GetStatus=0x2a (STBY_RC) + register write/read round-trip all passed on these pins.
+ * Source: RAK3112 datasheet + RAK forum + Zephyr rak3112 DTS (all agree); bench-verified.
+ *
+ * IMPORTANT: these are NOT the module-edge "GPIO10..13 / SPI_*" pins — those are a
+ * SEPARATE user SPI broken out to the edge. ADR-001's pin-map labelled GPIO10-13 as the
+ * SX1262 SPI — that was WRONG (corrected hw-side after this confirmation). See ADR-003.
+ * --------------------------------------------------------------------------*/
+#define PIN_LORA_MISO                                                                              \
+    GPIO_NUM_3 /* SX1262 MISO (also ESP32-S3 JTAG-src strap @reset; free post-boot) */
+#define PIN_LORA_SCK GPIO_NUM_5   /* SX1262 SCK */
+#define PIN_LORA_MOSI GPIO_NUM_6  /* SX1262 MOSI */
+#define PIN_LORA_NSS GPIO_NUM_7   /* SX1262 NSS / CS */
+#define PIN_LORA_RESET GPIO_NUM_8 /* SX1262 NRESET (active-low, open-drain) */
+#define PIN_LORA_BUSY GPIO_NUM_48 /* SX1262 BUSY */
+#define PIN_LORA_DIO1 GPIO_NUM_47 /* SX1262 DIO1 (IRQ) */
+#define PIN_LORA_ANT_SW                                                                            \
+    GPIO_NUM_4 /* RF/antenna switch power (active-low). RF switching is                            \
+                * driven by SX1262 DIO2 (setDio2AsRfSwitch); TCXO by DIO3                          \
+                * — both SX1262-internal, controlled over SPI, not MCU pins. */
+
+/* ----------------------------------------------------------------------------
  * Strapping / module-internal pins — DO NOT DRIVE from application code
  * --------------------------------------------------------------------------*/
 #define PIN_BOOT_SW2                                                                               \
     GPIO_NUM_0 /* strap: boot-mode select; SW2; pin 24.                                            \
                  HIGH at reset = normal SPI boot. */
-/* GPIO3  (JTAG src), GPIO45 (VDD_SPI voltage), GPIO46 (ROM print): module-internal
- * / NC on RAK3112 — intentionally NOT defined here so nothing references them. */
+/* GPIO45 (VDD_SPI voltage), GPIO46 (ROM print): module-internal — intentionally NOT defined
+ * here so nothing references them. (GPIO3 is a JTAG-src strap at reset but is the SX1262 MISO
+ * post-boot — defined above as PIN_LORA_MISO.) */
 
 #endif /* GPIO_REMAP_H */

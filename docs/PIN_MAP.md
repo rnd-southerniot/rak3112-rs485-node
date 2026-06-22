@@ -33,4 +33,4 @@
 | Console | Native USB-CDC (USB_D− pin 2 / USB_D+ pin 3 → USB-C `USB1`), 115200 |
 | Logic power | USB-C 5 V → RT6160 buck-boost → 3V3 |
 | **H1 jumper** | **Must be INSTALLED** (series 3V3 enable). Removed = "device not detected" |
-| SX1262 control pins | To be extracted from ADR-001 into `gpio_remap.h` at Phase 5 entry |
+| SX1262 (module-internal, **bench-confirmed 2026-06-20**) | NSS=GPIO7, SCK=GPIO5, MOSI=GPIO6, MISO=GPIO3, NRESET=GPIO8, BUSY=GPIO48, DIO1=GPIO47, ANT_SW=GPIO4; RF-switch via SX1262 DIO2, TCXO via DIO3 (SPI-internal). **NOT** the edge GPIO10–13/SPI_* pins — those are a separate user SPI (ADR-001 mislabel, corrected). |

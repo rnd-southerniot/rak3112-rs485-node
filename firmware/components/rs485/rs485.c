@@ -12,11 +12,14 @@ esp_err_t rs485_init(const rs485_config_t *cfg)
     const uart_config_t uc = {
         .baud_rate = cfg->baud_rate,
         .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
+        .parity = cfg->parity, /* 0 = UART_PARITY_DISABLE = 8N1 (default) */
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
+    const char parity_char = (cfg->parity == UART_PARITY_EVEN)  ? 'E'
+                             : (cfg->parity == UART_PARITY_ODD) ? 'O'
+                                                                : 'N';
 
     ESP_RETURN_ON_ERROR(uart_driver_install(cfg->port, cfg->rx_buffer_size, 0, 0, NULL, 0), TAG,
                         "uart_driver_install");
@@ -35,8 +38,9 @@ esp_err_t rs485_init(const rs485_config_t *cfg)
     ESP_RETURN_ON_ERROR(uart_set_line_inverse(cfg->port, UART_SIGNAL_INV_DISABLE), TAG,
                         "uart_set_line_inverse");
 
-    ESP_LOGI(TAG, "RS-485 UART%d up: TX=%d RX=%d DE/RE=%d @ %d 8N1 (half-duplex, standard DE)",
-             (int)cfg->port, cfg->tx_gpio, cfg->rx_gpio, cfg->de_re_gpio, cfg->baud_rate);
+    ESP_LOGI(TAG, "RS-485 UART%d up: TX=%d RX=%d DE/RE=%d @ %d 8%c1 (half-duplex, standard DE)",
+             (int)cfg->port, cfg->tx_gpio, cfg->rx_gpio, cfg->de_re_gpio, cfg->baud_rate,
+             parity_char);
     return ESP_OK;
 }
 

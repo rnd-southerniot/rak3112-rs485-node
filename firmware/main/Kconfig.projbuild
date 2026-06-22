@@ -1,0 +1,32 @@
+menu "rak3112-rs485-node app"
+
+config APP_MODBUS_SCAN_ON_BOOT
+    bool "Bench: run a Modbus RTU bus scan at boot (instead of LoRaWAN)"
+    default n
+    help
+        Bring-up tool. When set, app_main initialises RS-485 and scans Modbus unit IDs
+        (sweeping common baud rates, starting at 9600 8N1), logging which IDs answer —
+        a valid reply OR a Modbus exception both count as "present". It does NOT join
+        LoRaWAN in this mode. Leave OFF for normal field firmware.
+
+config APP_MODBUS_SCAN_ID_LO
+    int "Scan: lowest unit ID"
+    depends on APP_MODBUS_SCAN_ON_BOOT
+    range 1 247
+    default 1
+    help
+        Modbus unit IDs are 1-247; ID 0 is broadcast (never replies), so the scan starts at 1.
+
+config APP_MODBUS_SCAN_ID_HI
+    int "Scan: highest unit ID"
+    depends on APP_MODBUS_SCAN_ON_BOOT
+    range 1 247
+    default 10
+
+config APP_MODBUS_SCAN_TIMEOUT_MS
+    int "Scan: per-probe response timeout (ms)"
+    depends on APP_MODBUS_SCAN_ON_BOOT
+    range 50 2000
+    default 300
+
+endmenu

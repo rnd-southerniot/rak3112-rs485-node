@@ -15,3 +15,12 @@ CONFIG_SPIRAM_MODE_OCT=y
 # console; USB-Serial-JTAG is the correct console for this board. Supersedes the USB_CDC choice.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y
+
+# Phase 5 fix (2026-06-22): 1 kHz FreeRTOS tick for RadioLib LoRaWAN timing.
+# RadioLib's LoRaWANNode::transmitUplink waits for TxDone with sleepDelay(toa) followed by a
+# scanGuard=10 ms poll of digitalRead(DIO1). sleepDelay falls back to vTaskDelay(pdMS_TO_TICKS),
+# so at the ESP-IDF default 100 Hz (10 ms) tick the air-time wait quantizes/undershoots by up to
+# one tick — the DIO1 poll starts before the real TxDone and the 10 ms guard expires first →
+# RADIOLIB_ERR_TX_TIMEOUT (-5). 1 ms ticks make the wait accurate to ~1 ms (well inside the 10 ms
+# guard) and also tighten the RX1/RX2 window alignment. Matches RadioLib's ESP-IDF LoRaWAN guidance.
+CONFIG_FREERTOS_HZ=1000

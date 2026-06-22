@@ -282,6 +282,40 @@ Whether the frame physically goes out
 (ChirpStack frame log) couldn't be checked — the CRM `/chirpstack/device` endpoint returns device
 config only (no last-seen/fcnt/frames). **Phase 5 not signed off until an uplink frame lands.**
 
+### 5c — 2026-06-22 — data uplink `-5` FIXED (100 Hz FreeRTOS tick was the root cause)
+
+**Fix: `CONFIG_FREERTOS_HZ=1000` in `sdkconfig.defaults`.** Single change; bench-verified.
+
+The 5b-fw "refined root cause" (TxDone never asserts on the data frame specifically) was a
+misread — and so was "fails in ~190 ms, too fast for an SF9 ToA timeout, so not data-rate." The
+fast failure *is* the tell. `LoRaWANNode::transmitUplink` waits with `sleepDelay(toa)` then polls
+`digitalRead(DIO1)` until `millis() > txEnd + scanGuard`, and **`scanGuard = 10 ms`**
+(LoRaWAN.h:990). At the ESP-IDF default **100 Hz tick (10 ms)**:
+
+- `sleepDelay(toa)` → `vTaskDelay(pdMS_TO_TICKS(toa))` quantizes/undershoots the air-time by up
+  to one tick (≈10 ms), so the poll starts *before* the real TxDone; and
+- `millis()` advances in 10 ms steps and the guard is exactly **1 tick**, so `txEnd + 10 ms` is
+  reached almost immediately → `-5` in ~one tick. That's why it "failed too fast" and why forcing
+  DR3/ADR-off did nothing — it was never a DR/ToA problem.
+
+At **1000 Hz**: `sleepDelay` is accurate to ~1 ms and the 10 ms guard is 10 ticks of real poll
+window → DIO1 is caught every time. (The join tolerated 100 Hz because `app_main` retries the
+join 5× and its longer-ToA timing occasionally aligned; the periodic data uplink had no such
+retry, so it failed every cycle.) The earlier DIO1-ISR-trampoline fix (5b-fw) was a real latent
+bug on the **downlink** ISR path and is kept — it just wasn't this bug.
+
+**Bench evidence (project board, S3R8, MAC `3c:dc:75:6f:85:dc`, `/dev/cu.usbmodem1401`):**
+`idf.py flash` of the 1 kHz build, then **4/4 consecutive `uplink OK (rx window=0)`** at uptimes
+65 s / 128 s / 190 s / 252 s, **zero `-5`** — replacing the previously consistent `uplink failed
+(-5)`. `rx window=0` = uplink sent, no downlink pending (correct for an unconfirmed uplink).
+Binary SHA-256 `38105b4eaa218685a218a2505b3d2af7c5de2cc4e3b9dfd03fe926e32f9b9f9a`, `IDF_VER=v5.5.4-dirty`
+(local PARLIO mod, off-compile-path, Footnote 1).
+
+**Lesson:** RadioLib LoRaWAN on ESP-IDF needs a 1 kHz FreeRTOS tick — its TX-done guard and RX
+window timing assume ~ms scheduling granularity; the 100 Hz default silently breaks sub-tick
+waits. **Still open for Phase 5 sign-off:** confirm the frames land in the ChirpStack frame log
+(`10.10.8.140`) — the firmware now reports success, but end-to-end frame arrival is a separate check.
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

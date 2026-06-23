@@ -29,4 +29,28 @@ config APP_MODBUS_SCAN_TIMEOUT_MS
     range 50 2000
     default 300
 
+config APP_MODBUS_POLL_ON_BOOT
+    bool "Bench: continuously poll one Modbus register at boot (instead of LoRaWAN)"
+    default n
+    help
+        Bring-up tool. Reads one FC03 holding register from a fixed unit at 1 Hz (8N1) and logs
+        the value (or timeout/exception). Use for live A/B-swap / wiring trial-and-error against a
+        known device. Does NOT join LoRaWAN. Leave OFF for normal field firmware.
+
+config APP_MODBUS_POLL_UNIT
+    int "Poll: unit ID"
+    depends on APP_MODBUS_POLL_ON_BOOT
+    range 1 247
+    default 1
+
+config APP_MODBUS_POLL_BAUD
+    int "Poll: baud rate"
+    depends on APP_MODBUS_POLL_ON_BOOT
+    default 4800
+
+config APP_MODBUS_POLL_REG
+    int "Poll: holding-register wire address"
+    depends on APP_MODBUS_POLL_ON_BOOT
+    default 0
+
 endmenu

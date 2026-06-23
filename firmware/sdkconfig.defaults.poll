@@ -1,0 +1,8 @@
+# Bench profile: continuously poll one Modbus register (live bring-up / A-B swap aid).
+# Usage:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.poll" build flash monitor
+# Defaults target the RS-FSJT-N01: unit 1, 4800 8N1, FC03 holding reg 0 (wind speed x0.1 m/s).
+CONFIG_APP_MODBUS_POLL_ON_BOOT=y
+CONFIG_APP_MODBUS_POLL_UNIT=1
+CONFIG_APP_MODBUS_POLL_BAUD=4800
+CONFIG_APP_MODBUS_POLL_REG=0

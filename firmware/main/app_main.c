@@ -9,7 +9,7 @@
 
 #include "gpio_remap.h"
 #include "lora.h"
-#if CONFIG_APP_MODBUS_SCAN_ON_BOOT
+#if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT
 #include "modbus_master.h"
 #include "rs485.h"
 #endif
@@ -99,11 +99,53 @@ static void run_modbus_scan(void)
 }
 #endif /* CONFIG_APP_MODBUS_SCAN_ON_BOOT */
 
+#if CONFIG_APP_MODBUS_POLL_ON_BOOT
+/* Bench bring-up: poll one FC03 holding register at 1 Hz on CN1 and print the value (or
+ * timeout/exception). Lets you swap A/B + verify wiring against a known device and watch it come
+ * alive live. Fixed 8N1 (matches RS-FSJT). Does not return. */
+static void run_modbus_poll(void)
+{
+    const rs485_config_t cfg = {
+        .port = UART_NUM_1,
+        .tx_gpio = PIN_RS485_TX,
+        .rx_gpio = PIN_RS485_RX,
+        .de_re_gpio = PIN_RS485_DE_RE,
+        .baud_rate = CONFIG_APP_MODBUS_POLL_BAUD,
+        .parity = UART_PARITY_DISABLE,
+        .rx_buffer_size = 256,
+    };
+    ESP_ERROR_CHECK(rs485_init(&cfg));
+    const uint8_t unit = (uint8_t)CONFIG_APP_MODBUS_POLL_UNIT;
+    const uint16_t reg = (uint16_t)CONFIG_APP_MODBUS_POLL_REG;
+    ESP_LOGI(TAG, "Modbus poll: unit %u, FC03 reg %u @ %d 8N1, 1 Hz — swap A/B if it times out",
+             (unsigned)unit, (unsigned)reg, CONFIG_APP_MODBUS_POLL_BAUD);
+    for (uint32_t n = 0;; ++n) {
+        uint16_t val = 0;
+        uint8_t exc = 0;
+        const modbus_status_t st = modbus_master_read(
+            UART_NUM_1, unit, MODBUS_FC_READ_HOLDING_REGISTERS, reg, 1, 500, &val, &exc);
+        if (st == MODBUS_OK) {
+            ESP_LOGI(TAG, "[%lu] reg%u = %u (raw) = %u.%u (x0.1)", (unsigned long)n, (unsigned)reg,
+                     (unsigned)val, (unsigned)(val / 10), (unsigned)(val % 10));
+        } else if (st == MODBUS_ERR_EXCEPTION) {
+            ESP_LOGW(TAG, "[%lu] exception 0x%02X (device answered)", (unsigned long)n,
+                     (unsigned)exc);
+        } else {
+            ESP_LOGW(TAG, "[%lu] timeout (st=%d) — no reply; try swapping A/B, check GND",
+                     (unsigned long)n, (int)st);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+#endif /* CONFIG_APP_MODBUS_POLL_ON_BOOT */
+
 void app_main(void)
 {
     hold_reserved_pins_floating();
 
-#if CONFIG_APP_MODBUS_SCAN_ON_BOOT
+#if CONFIG_APP_MODBUS_POLL_ON_BOOT
+    run_modbus_poll(); /* bench bring-up mode — does not return */
+#elif CONFIG_APP_MODBUS_SCAN_ON_BOOT
     run_modbus_scan(); /* bench bring-up mode — does not return */
 #endif
 

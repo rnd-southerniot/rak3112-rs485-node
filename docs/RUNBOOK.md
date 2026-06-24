@@ -385,6 +385,20 @@ powered + in Modbus RTU mode; (b) unit ID > 10 (sweep capped at 10; wrong-slave 
 **Fastest disambiguation: read baud/parity/slave-ID directly off the MFM384 front-panel setup menu**
 and set the poll profile to those exact values, then widen `CONFIG_APP_MODBUS_SCAN_ID_HI` if needed.
 
+**Hardware cross-check vs proven reference (2026-06-24).** The org's `rak3312-rs485-plan`
+`examples/rak3312_mfm384` (reached Gate 8 live on this exact meter) was reviewed line-by-line. Our
+firmware matches it in every protocol dimension: TX=GPIO43, RX=GPIO44, DE=GPIO21, DE polarity
+HIGH=TX/LOW=RX, 9600 8N1 unit 1, linkcheck FC03 reg 6, energy FC04 reg 89 qty 2 with float
+`u32=(hi<<16)|lo` (= our ABCD word order). **One difference, and it does NOT apply to us:** the
+RAK3312 reference drives RS-485 through a **RAK5802 module with a separate ENABLE pin on GPIO14
+(WB_IO2) that must be HIGH before any Modbus traffic** — if low, that module is disabled and the bus
+goes totally silent (our exact symptom). Our board has **no such enable pin**: RAK3112 + onboard
+TP8485E, DE/RE on GPIO21 only, and Phase 4 echo proved that path works to a USB-RS485 adapter with
+GPIO21 alone. So GPIO14 is RAK5802-specific, irrelevant here. **Net: firmware confirmed correct
+(twice — Phase 4 echo + reference match); the silence is purely the MFM384↔CN1 physical link.** The
+reference's own troubleshooting reduces to "confirm A/B wiring and common GND" — which is the bench
+action. SELEC MFM384 RS-485 terminals may be labeled opposite to CN1 A/B → try both orientations.
+
 **Remaining Phase 6 (6c):** NVS register-set config, ADR-005 payload schema (compact versioned
 binary + ChirpStack JS codec), encode MFM384 reads into the LoRaWAN uplink, then push/CI/merge/tag.
 

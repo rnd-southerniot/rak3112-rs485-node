@@ -76,6 +76,6 @@ fields clamp to 0. Encoder: `firmware/components/payload/payload.c` (pure C, hos
 - **Validation pending (home lab):** build with `sdkconfig.defaults.sim-mfm384`, join the CRM
   ChirpStack (`10.10.8.140`), and confirm the decoder renders sane fields (~230 V, ~50 Hz, kWh
   climbing) with the `simulated` flag set. Then repeat real with the meter, and the RS-FSJT real read.
-- RS-FSJT scale is taken as raw/10 (MODBUS_MAP.md); a /100 variant exists in one reference — confirm
-  against the physical sensor on the home bench and, if different, fix `meter_read_rsfsjt` (firmware
-  side only; the wire payload scale ×100 is independent and stays).
+- RS-FSJT scale **confirmed raw/10 = m/s on the bench (2026-06-24)**: a steady blow gave raw ~33–58
+  (≈3.3–5.8 m/s), ruling out the /100 variant seen in one reference. `meter_read_rsfsjt` is correct
+  as written. (The wire payload scale ×100 is independent of the sensor scale and stays.)

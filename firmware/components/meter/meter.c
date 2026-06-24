@@ -57,7 +57,9 @@ esp_err_t meter_read_rsfsjt(uart_port_t port, uint8_t unit, rsfsjt_sample_t *out
     if (st != MODBUS_OK) {
         return ESP_FAIL;
     }
-    out->wind_mps = (float)reg / 10.0f; /* RS-FSJT: raw/10 = m/s (MODBUS_MAP); confirm on bench */
+    out->wind_mps =
+        (float)reg / 10.0f; /* RS-FSJT raw/10 = m/s — confirmed on bench 2026-06-24
+                             * (blow test: raw ~33-58 => ~3.3-5.8 m/s; ÷100 ruled out) */
     return ESP_OK;
 }
 

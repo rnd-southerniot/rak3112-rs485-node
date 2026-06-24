@@ -399,6 +399,38 @@ GPIO21 alone. So GPIO14 is RAK5802-specific, irrelevant here. **Net: firmware co
 reference's own troubleshooting reduces to "confirm A/B wiring and common GND" — which is the bench
 action. SELEC MFM384 RS-485 terminals may be labeled opposite to CN1 A/B → try both orientations.
 
+**Attempt 2 — FC03 + FC04 polls, still silent (2026-06-24).** Operator confirmed meter target
+9600 / unit 1 / parity none. Flashed `sdkconfig.defaults.poll` (FC03 reg 6, linkcheck) → steady
+`timeout (st=-2)`, 0 bytes. Then a **second proven reference** was reviewed:
+`southern-rnd/ETS-LORA-Test/.../rak3112_ets_careflow_anemometer_espidf` — **same RAK3112 + same
+MFM384, ESP-IDF, tested working**. It reads the MFM384 **entirely over FC04 input registers**
+(voltage-first map: V1N @ reg 0, …, Total kWh @ reg 58), float via `memcpy` of
+`u32=(hi<<16)|lo` with **first register = LOW word (CDAB)** — note this conflicts with the RAK3312
+gate3 map (energy @ reg 89, first register = HIGH word = ABCD); the two proven repos disagree on
+both register map and word order, so when bytes finally flow we must try FC04, both maps, and both
+word orders. Pins/baud/DE-polarity all match ours (TX43/RX44, 9600 8N1, HIGH=TX). DE pin differs
+(ETS=GPIO34) but that's a *different carrier* (TFT/touch/RFID board); our DE=GPIO21 is Phase-4-proven
+(echo 256/256 — impossible unless GPIO21 drives our TP8485E) and confirmed in this boot log
+(`UART1 up: TX=43 RX=44 DE/RE=21`). Acting on the FC04 finding, flashed `sdkconfig.defaults.mfm384-volt`
+(FC04 reg 0, float32) → **still `timeout (st=-2)`, 0 bytes**. **Verdict: function code is NOT the
+cause; the meter returns zero bytes for both FC03 and FC04 at the swept baud/parity. Firmware
+exonerated three independent ways (Phase 4 echo + RAK3312 + ETS). Blocker is purely physical /
+meter-not-transmitting.** No firmware change can turn zero returned bytes into data. Next is an
+electrical bench check (see below) — not more flashing.
+
+**Electrical bench plan (operator — localizes node-TX vs meter-reply vs wiring):**
+1. **Is the MFM384 actually wired to CN1 and powered right now?** It needs its aux/line supply; an
+   unpowered meter is dead-silent. Three timeout flashes with proven-correct firmware most often
+   means the bus isn't truly connected/powered.
+2. **A/B + common GND:** MFM384 A→CN1 A, B→CN1 B (try the swap — SELEC labels may be reversed), and
+   meter RS-485 GND/COM → CN1 GND. Verify each with a multimeter continuity check.
+3. **Scope/Saleae** (the ground-truth detector, per the RS-FSJT lesson) on **GPIO43 (TX)**,
+   **GPIO21 (DE)**, and **CN1 A/B** during a poll tick: confirm (a) a TX frame leaves on GPIO43,
+   (b) DE pulses high around it, (c) the A/B differential actually swings, (d) whether the meter
+   ever drives a reply. This isolates node-TX vs meter-reply vs cabling in one capture.
+4. **Meter config:** confirm RS-485/Modbus output is **enabled** in the MFM384 menu (not just baud
+   set) and that 9600/8N1/unit-1 are the *active* settings, not defaults shown on a spec sheet.
+
 **Remaining Phase 6 (6c):** NVS register-set config, ADR-005 payload schema (compact versioned
 binary + ChirpStack JS codec), encode MFM384 reads into the LoRaWAN uplink, then push/CI/merge/tag.
 

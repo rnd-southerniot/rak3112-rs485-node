@@ -374,6 +374,17 @@ so the operator's meter may differ — the scan profile sweeps baud×parity if s
 
 The old RS-FSJT profile is preserved as `sdkconfig.defaults.poll-rsfsjt` (4800 8N1, FC03 reg 0).
 
+**Attempt 1 — scan, MFM384 not reached (2026-06-24).** Flashed `sdkconfig.defaults.scan` to project
+board MAC `3c:dc:75:6f:85:dc` (ESP32-S3R8, 8MB octal PSRAM OK, native USB `/dev/cu.usbmodem11301`).
+Full sweep ran clean: 18 combos (9600/4800/19200/38400/57600/115200 × 8N1/8E1/8O1), IDs 1–10, FC03
+@reg 6, 300 ms timeout → **0 devices, 0 garbage in every combo**. Firmware/board healthy (scan
+executed start to finish). `0 garbage` everywhere ⇒ no malformed bytes received at any baud, i.e.
+**no electrical return path or no responder** — NOT a baud/parity mismatch (that would surface as
+garbage). Distinguishing causes left to the operator: (a) wiring — A/B on CN1, common GND, meter
+powered + in Modbus RTU mode; (b) unit ID > 10 (sweep capped at 10; wrong-slave = silence by spec).
+**Fastest disambiguation: read baud/parity/slave-ID directly off the MFM384 front-panel setup menu**
+and set the poll profile to those exact values, then widen `CONFIG_APP_MODBUS_SCAN_ID_HI` if needed.
+
 **Remaining Phase 6 (6c):** NVS register-set config, ADR-005 payload schema (compact versioned
 binary + ChirpStack JS codec), encode MFM384 reads into the LoRaWAN uplink, then push/CI/merge/tag.
 

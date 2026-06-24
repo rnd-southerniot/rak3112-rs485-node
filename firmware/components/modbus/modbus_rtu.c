@@ -4,6 +4,8 @@
  */
 #include "modbus_rtu.h"
 
+#include <string.h>
+
 uint16_t modbus_crc16(const uint8_t *data, size_t len)
 {
     uint16_t crc = 0xFFFFu;
@@ -96,4 +98,17 @@ modbus_status_t modbus_parse_read_response(const uint8_t *adu, size_t len, uint8
         regs_out[i] = (uint16_t)(((uint16_t)adu[off] << 8) | (uint16_t)adu[off + 1u]);
     }
     return MODBUS_OK;
+}
+
+float modbus_regs_to_f32(const uint16_t *regs, modbus_word_order_t order)
+{
+    if (regs == NULL) {
+        return 0.0f;
+    }
+    const uint16_t hi = (order == MODBUS_WORD_ORDER_CDAB) ? regs[1] : regs[0];
+    const uint16_t lo = (order == MODBUS_WORD_ORDER_CDAB) ? regs[0] : regs[1];
+    const uint32_t bits = ((uint32_t)hi << 16) | (uint32_t)lo;
+    float f;
+    memcpy(&f, &bits, sizeof(f)); /* type-pun without aliasing UB */
+    return f;
 }

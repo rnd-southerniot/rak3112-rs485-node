@@ -325,6 +325,58 @@ endpoint (`:4000`) returns config only (no telemetry); frame verification must u
 ChirpStack UI/API at `:8080` directly. **Phase 5 uplink milestone: PASS.** (Remaining Phase 5
 sign-off scope — ADR-003 stack / ADR-004 sub-band formal close, payload schema — tracked separately.)
 
+## Phase 6 — Modbus RTU master: device pivot to SELEC MFM384 (2026-06-24)
+
+**Target change.** Phase 6 bring-up retargeted from the RS-FSJT-N01 wind sensor to a **SELEC
+MFM384** 3-phase multifunction meter. Rationale: the RS-FSJT bench was blocked on a sensor↔CN1
+*physical* join (open conductor / no common GND in both A/B orientations — node CN1 TX path itself
+proven byte-perfect in Phase 4). The firmware was never the blocker. The MFM384 is mains/aux-powered
+with its own RS-485 terminals (no separate bus PSU to lose), so it sidesteps that failure mode.
+
+**MFM384 Modbus map** (from the org's proven RAK3312 bring-up, `rnd-southerniot/rak3312-rs485-plan`
+`docs/rak3312/MODBUS_MAP.md`, which reached Gate 8 live publish on this exact meter):
+
+| Read | FC | Register (human → wire) | Type | Notes |
+|---|---|---|---|---|
+| Linkcheck | 0x03 | 40007 → 6 | uint16 | any reply proves the link |
+| Endianness | 0x03 | 40070 → 69 | uint16 | expect `1` = ABCD word order |
+| Total active energy | 0x04 | 30090..30091 → 89..90 | float32 ABCD | kWh |
+
+Serial (org bench known-good): **9600 8N1, unit 1**. MFM384 baud/unit are front-panel configurable,
+so the operator's meter may differ — the scan profile sweeps baud×parity if so.
+
+**Firmware support added this session** (float32 + FC04, on top of the existing 6a/6b framing):
+- `modbus_rtu`: pure `modbus_regs_to_f32(regs, ABCD|CDAB)` — host-tested KAT (`{0x447A,0x0000}` ABCD
+  = 1000.0f). No aliasing UB (memcpy type-pun).
+- Poll bring-up mode now takes a function code (FC03/FC04) and an optional float32 read (2 regs);
+  scan probe register is now configurable.
+
+**Bench bring-up sequence (operator):**
+1. **Wiring:** MFM384 A/B → CN1 A/B, and a **common GND** (meter RS-485 GND ↔ CN1 GND). Confirm the
+   meter is powered (front-panel lit) and in **RTU** mode at its configured baud/unit.
+2. **Linkcheck first** (quick "is it alive", uint16 @ FC03 reg 6):
+   ```bash
+   cd firmware && . ~/esp/esp-idf-v5.5.4/export.sh
+   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.poll" build flash monitor
+   # expect: [n] reg6 = <value> (raw, 0x....)   — a reply = link good. swap A/B if it times out.
+   ```
+3. **If linkcheck times out / unknown baud:** run the scanner (sweeps baud×parity×unit IDs):
+   ```bash
+   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.scan" build flash monitor
+   ```
+   (Set `CONFIG_APP_MODBUS_SCAN_PROBE_REG=6` for the MFM384's known-good holding register.)
+4. **Real measurand** (total active energy, float32 kWh @ FC04 reg 89..90):
+   ```bash
+   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.mfm384" build flash monitor
+   # expect: [n] reg89..90 = 0x........  = <kWh>
+   ```
+   If the float looks like garbage, the meter uses CDAB — set `CONFIG_APP_MODBUS_POLL_FLOAT_CDAB=y`.
+
+The old RS-FSJT profile is preserved as `sdkconfig.defaults.poll-rsfsjt` (4800 8N1, FC03 reg 0).
+
+**Remaining Phase 6 (6c):** NVS register-set config, ADR-005 payload schema (compact versioned
+binary + ChirpStack JS codec), encode MFM384 reads into the LoRaWAN uplink, then push/CI/merge/tag.
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

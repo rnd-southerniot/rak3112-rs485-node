@@ -55,4 +55,23 @@ modbus_status_t modbus_parse_read_response(const uint8_t *adu, size_t len, uint8
                                            uint8_t expect_func, uint16_t expect_qty,
                                            uint16_t *regs_out, uint8_t *exception_out);
 
+/*
+ * Word order for a 32-bit value spread across two consecutive Modbus registers. `regs[0]` is the
+ * register at the lower wire address (read first), `regs[1]` the next.
+ *   ABCD — big-endian word order: regs[0] is the high word. Modbus-standard / IEEE-754 byte order.
+ *          The SELEC MFM384 reports this via its endianness register (40070 = 1).
+ *   CDAB — word-swapped: regs[0] is the low word (common on some PLCs / energy meters).
+ */
+typedef enum {
+    MODBUS_WORD_ORDER_ABCD = 0,
+    MODBUS_WORD_ORDER_CDAB = 1,
+} modbus_word_order_t;
+
+/*
+ * Reconstruct an IEEE-754 float32 from two registers (as returned by modbus_parse_read_response,
+ * i.e. each already host-endian big-endian-decoded). No type-punning UB: assembles a uint32_t in
+ * the selected word order then memcpy's into a float. Known-answer: {0x447A,0x0000} ABCD = 1000.0f.
+ */
+float modbus_regs_to_f32(const uint16_t *regs, modbus_word_order_t order);
+
 #endif /* MODBUS_RTU_H */

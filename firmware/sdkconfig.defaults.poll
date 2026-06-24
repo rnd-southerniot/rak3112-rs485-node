@@ -1,8 +1,12 @@
-# Bench profile: continuously poll one Modbus register (live bring-up / A-B swap aid).
+# Bench profile: MFM384 linkcheck — poll one holding register at 1 Hz (quick "is it alive").
 # Usage:
 #   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.poll" build flash monitor
-# Defaults target the RS-FSJT-N01: unit 1, 4800 8N1, FC03 holding reg 0 (wind speed x0.1 m/s).
+# Target: SELEC MFM384 multifunction meter — unit 1, 9600 8N1, FC03 linkcheck reg 40007 (wire 6).
+# A reply with any value proves the link; swap A/B if it times out. For the float energy read use
+# sdkconfig.defaults.mfm384; for the old RS-FSJT wind sensor use sdkconfig.defaults.poll-rsfsjt.
 CONFIG_APP_MODBUS_POLL_ON_BOOT=y
 CONFIG_APP_MODBUS_POLL_UNIT=1
-CONFIG_APP_MODBUS_POLL_BAUD=4800
-CONFIG_APP_MODBUS_POLL_REG=0
+CONFIG_APP_MODBUS_POLL_BAUD=9600
+CONFIG_APP_MODBUS_POLL_FC=3
+CONFIG_APP_MODBUS_POLL_REG=6
+CONFIG_APP_MODBUS_POLL_FLOAT=n

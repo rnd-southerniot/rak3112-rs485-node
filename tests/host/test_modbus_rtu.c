@@ -118,6 +118,28 @@ static void test_parse_errors(void)
     CHECK(modbus_parse_read_response(a4, len, 1, 0x03, 0, regs, NULL) == MODBUS_ERR_ARG);
 }
 
+/* IEEE-754 float32 reconstruction from two registers, both word orders. */
+static void test_regs_to_f32(void)
+{
+    /* 1000.0f == 0x447A0000. ABCD: high word in regs[0]. CDAB: high word in regs[1]. */
+    const uint16_t abcd[2] = {0x447Au, 0x0000u};
+    const uint16_t cdab[2] = {0x0000u, 0x447Au};
+    CHECK(modbus_regs_to_f32(abcd, MODBUS_WORD_ORDER_ABCD) == 1000.0f);
+    CHECK(modbus_regs_to_f32(cdab, MODBUS_WORD_ORDER_CDAB) == 1000.0f);
+    /* Cross-check the orders are genuinely distinct (ABCD of the CDAB layout != 1000.0f). */
+    CHECK(modbus_regs_to_f32(cdab, MODBUS_WORD_ORDER_ABCD) != 1000.0f);
+
+    /* A non-trivial value: 12.34f == 0x41454B85 (A=0x41,B=0x45,C=0x4B,D=0x85). */
+    const uint16_t v[2] = {0x4145u, 0x4B85u};
+    const float f = modbus_regs_to_f32(v, MODBUS_WORD_ORDER_ABCD);
+    CHECK(f > 12.33f && f < 12.35f);
+
+    /* 0.0f and NULL safety. */
+    const uint16_t zero[2] = {0x0000u, 0x0000u};
+    CHECK(modbus_regs_to_f32(zero, MODBUS_WORD_ORDER_ABCD) == 0.0f);
+    CHECK(modbus_regs_to_f32(NULL, MODBUS_WORD_ORDER_ABCD) == 0.0f);
+}
+
 int main(void)
 {
     test_crc16_kat();
@@ -125,6 +147,7 @@ int main(void)
     test_parse_ok();
     test_parse_exception();
     test_parse_errors();
+    test_regs_to_f32();
 
     printf("modbus_rtu: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

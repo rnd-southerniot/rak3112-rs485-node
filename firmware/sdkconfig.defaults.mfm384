@@ -1,0 +1,14 @@
+# Bench profile: SELEC MFM384 — poll total active energy (float32) at 1 Hz.
+# Usage:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.mfm384" build flash monitor
+# Reads FC04 input registers 30090..30091 (wire 89..90) as an IEEE-754 float32 (ABCD word order,
+# per MFM384 endianness register 40070 = 1) and logs it as kWh. Run the linkcheck profile
+# (sdkconfig.defaults.poll) first to confirm the link, then this for a real measurand.
+# If the value looks like garbage, the meter may use CDAB — set CONFIG_APP_MODBUS_POLL_FLOAT_CDAB=y.
+CONFIG_APP_MODBUS_POLL_ON_BOOT=y
+CONFIG_APP_MODBUS_POLL_UNIT=1
+CONFIG_APP_MODBUS_POLL_BAUD=9600
+CONFIG_APP_MODBUS_POLL_FC=4
+CONFIG_APP_MODBUS_POLL_REG=89
+CONFIG_APP_MODBUS_POLL_FLOAT=y
+CONFIG_APP_MODBUS_POLL_FLOAT_CDAB=n

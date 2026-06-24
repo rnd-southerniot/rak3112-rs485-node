@@ -52,7 +52,7 @@ static void run_modbus_scan(void)
     const uint8_t id_lo = (uint8_t)CONFIG_APP_MODBUS_SCAN_ID_LO;
     const uint8_t id_hi = (uint8_t)CONFIG_APP_MODBUS_SCAN_ID_HI;
     const uint32_t timeout_ms = (uint32_t)CONFIG_APP_MODBUS_SCAN_TIMEOUT_MS;
-    const uint16_t probe_addr = 0x0000;
+    const uint16_t probe_addr = (uint16_t)CONFIG_APP_MODBUS_SCAN_PROBE_REG;
 
     ESP_LOGI(TAG,
              "=== Modbus RTU bus scan (CN1) — ids %u-%u x baud x {8N1,8E1,8O1}, FC03 @0x%04X ===",
@@ -100,9 +100,10 @@ static void run_modbus_scan(void)
 #endif /* CONFIG_APP_MODBUS_SCAN_ON_BOOT */
 
 #if CONFIG_APP_MODBUS_POLL_ON_BOOT
-/* Bench bring-up: poll one FC03 holding register at 1 Hz on CN1 and print the value (or
- * timeout/exception). Lets you swap A/B + verify wiring against a known device and watch it come
- * alive live. Fixed 8N1 (matches RS-FSJT). Does not return. */
+/* Bench bring-up: poll one Modbus register set at 1 Hz on CN1 and print the value (or
+ * timeout/exception). Supports FC03/FC04 and, for the SELEC MFM384, a 32-bit float across 2
+ * registers. Lets you swap A/B + verify wiring against a known device and watch it come alive
+ * live. Fixed 8N1 (MFM384 + RS-FSJT both use it). Does not return. */
 static void run_modbus_poll(void)
 {
     const rs485_config_t cfg = {
@@ -117,21 +118,44 @@ static void run_modbus_poll(void)
     ESP_ERROR_CHECK(rs485_init(&cfg));
     const uint8_t unit = (uint8_t)CONFIG_APP_MODBUS_POLL_UNIT;
     const uint16_t reg = (uint16_t)CONFIG_APP_MODBUS_POLL_REG;
-    ESP_LOGI(TAG, "Modbus poll: unit %u, FC03 reg %u @ %d 8N1, 1 Hz — swap A/B if it times out",
-             (unsigned)unit, (unsigned)reg, CONFIG_APP_MODBUS_POLL_BAUD);
+    const uint8_t func = (CONFIG_APP_MODBUS_POLL_FC == 4) ? MODBUS_FC_READ_INPUT_REGISTERS
+                                                          : MODBUS_FC_READ_HOLDING_REGISTERS;
+#if CONFIG_APP_MODBUS_POLL_FLOAT
+    const uint16_t qty = 2;
+#if CONFIG_APP_MODBUS_POLL_FLOAT_CDAB
+    const modbus_word_order_t word_order = MODBUS_WORD_ORDER_CDAB;
+    const char *order_label = "CDAB";
+#else
+    const modbus_word_order_t word_order = MODBUS_WORD_ORDER_ABCD;
+    const char *order_label = "ABCD";
+#endif
+    ESP_LOGI(TAG, "Modbus poll: unit %u, FC%02u reg %u..%u @ %d 8N1, float32 %s, 1 Hz",
+             (unsigned)unit, (unsigned)func, (unsigned)reg, (unsigned)(reg + 1),
+             CONFIG_APP_MODBUS_POLL_BAUD, order_label);
+#else
+    const uint16_t qty = 1;
+    ESP_LOGI(TAG, "Modbus poll: unit %u, FC%02u reg %u @ %d 8N1, uint16, 1 Hz — swap A/B if silent",
+             (unsigned)unit, (unsigned)func, (unsigned)reg, CONFIG_APP_MODBUS_POLL_BAUD);
+#endif
     for (uint32_t n = 0;; ++n) {
-        uint16_t val = 0;
+        uint16_t val[2] = {0, 0};
         uint8_t exc = 0;
-        const modbus_status_t st = modbus_master_read(
-            UART_NUM_1, unit, MODBUS_FC_READ_HOLDING_REGISTERS, reg, 1, 500, &val, &exc);
+        const modbus_status_t st =
+            modbus_master_read(UART_NUM_1, unit, func, reg, qty, 500, val, &exc);
         if (st == MODBUS_OK) {
-            ESP_LOGI(TAG, "[%lu] reg%u = %u (raw) = %u.%u (x0.1)", (unsigned long)n, (unsigned)reg,
-                     (unsigned)val, (unsigned)(val / 10), (unsigned)(val % 10));
+#if CONFIG_APP_MODBUS_POLL_FLOAT
+            const float f = modbus_regs_to_f32(val, word_order);
+            ESP_LOGI(TAG, "[%lu] reg%u..%u = 0x%04X%04X = %.3f", (unsigned long)n, (unsigned)reg,
+                     (unsigned)(reg + 1), (unsigned)val[0], (unsigned)val[1], f);
+#else
+            ESP_LOGI(TAG, "[%lu] reg%u = %u (raw, 0x%04X)", (unsigned long)n, (unsigned)reg,
+                     (unsigned)val[0], (unsigned)val[0]);
+#endif
         } else if (st == MODBUS_ERR_EXCEPTION) {
-            ESP_LOGW(TAG, "[%lu] exception 0x%02X (device answered)", (unsigned long)n,
-                     (unsigned)exc);
+            ESP_LOGW(TAG, "[%lu] exception 0x%02X (device answered — wrong reg/FC?)",
+                     (unsigned long)n, (unsigned)exc);
         } else {
-            ESP_LOGW(TAG, "[%lu] timeout (st=%d) — no reply; try swapping A/B, check GND",
+            ESP_LOGW(TAG, "[%lu] timeout (st=%d) — no reply; check A/B, GND, baud, unit ID",
                      (unsigned long)n, (int)st);
         }
         vTaskDelay(pdMS_TO_TICKS(1000));

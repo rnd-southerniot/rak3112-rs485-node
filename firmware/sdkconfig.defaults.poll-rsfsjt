@@ -1,0 +1,11 @@
+# Bench profile: RS-FSJT-N01 wind-speed sensor — poll one holding register at 1 Hz.
+# Usage:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.poll-rsfsjt" build flash monitor
+# Target: RS-FSJT-N01 — unit 1, 4800 8N1, FC03 holding reg 40001 (wire 0), uint16, value / 10 = m/s.
+# Kept for the original Phase 6 device; the primary bring-up target is now the MFM384 (see .poll/.mfm384).
+CONFIG_APP_MODBUS_POLL_ON_BOOT=y
+CONFIG_APP_MODBUS_POLL_UNIT=1
+CONFIG_APP_MODBUS_POLL_BAUD=4800
+CONFIG_APP_MODBUS_POLL_FC=3
+CONFIG_APP_MODBUS_POLL_REG=0
+CONFIG_APP_MODBUS_POLL_FLOAT=n

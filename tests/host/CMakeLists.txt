@@ -29,3 +29,13 @@ target_include_directories(test_modbus_rtu PRIVATE
     ${FW_ROOT}/components/modbus/include
 )
 add_test(NAME modbus_rtu COMMAND test_modbus_rtu)
+
+# Phase 6c: payload encoder (ADR-005 compact versioned binary). Pure C.
+add_executable(test_payload
+    test_payload.c
+    ${FW_ROOT}/components/payload/payload.c
+)
+target_include_directories(test_payload PRIVATE
+    ${FW_ROOT}/components/payload/include
+)
+add_test(NAME payload COMMAND test_payload)

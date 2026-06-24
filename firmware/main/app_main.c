@@ -9,7 +9,9 @@
 
 #include "gpio_remap.h"
 #include "lora.h"
-#if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT
+#include "meter.h"
+#include "payload.h"
+#if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT || !CONFIG_APP_FIELD_SIMULATE
 #include "modbus_master.h"
 #include "rs485.h"
 #endif
@@ -163,6 +165,79 @@ static void run_modbus_poll(void)
 }
 #endif /* CONFIG_APP_MODBUS_POLL_ON_BOOT */
 
+/*
+ * Field application: sample the configured device (real Modbus or simulated) then LoRaWAN-uplink a
+ * compact ADR-005 payload, every CONFIG_APP_FIELD_SAMPLE_INTERVAL_S. Assumes lora is already
+ * joined.
+ */
+static void run_field_app(void)
+{
+    const uint8_t unit = (uint8_t)CONFIG_APP_FIELD_UNIT;
+    const TickType_t period = pdMS_TO_TICKS(1000u * (uint32_t)CONFIG_APP_FIELD_SAMPLE_INTERVAL_S);
+
+#if !CONFIG_APP_FIELD_SIMULATE
+    const rs485_config_t cfg = {
+        .port = UART_NUM_1,
+        .tx_gpio = PIN_RS485_TX,
+        .rx_gpio = PIN_RS485_RX,
+        .de_re_gpio = PIN_RS485_DE_RE,
+        .baud_rate = CONFIG_APP_FIELD_BAUD,
+        .parity = UART_PARITY_DISABLE,
+        .rx_buffer_size = 256,
+    };
+    ESP_ERROR_CHECK(rs485_init(&cfg));
+    ESP_LOGI(TAG, "field app: REAL Modbus, unit %u @ %d 8N1, %ds interval", (unsigned)unit,
+             CONFIG_APP_FIELD_BAUD, CONFIG_APP_FIELD_SAMPLE_INTERVAL_S);
+#else
+    ESP_LOGW(TAG, "field app: SIMULATED data (no Modbus), %ds interval — uplinks flagged simulated",
+             CONFIG_APP_FIELD_SAMPLE_INTERVAL_S);
+#endif
+
+    for (uint32_t tick = 0;; ++tick) {
+        uint8_t buf[PAYLOAD_MAX];
+        size_t len = 0;
+        uint8_t flags = 0;
+
+#if CONFIG_APP_FIELD_DEVICE_MFM384
+        mfm384_sample_t s = {0};
+#if CONFIG_APP_FIELD_SIMULATE
+        meter_sim_mfm384(tick, &s);
+        flags |= TELEMETRY_FLAG_SIMULATED;
+#else
+        if (meter_read_mfm384(UART_NUM_1, unit, &s) != ESP_OK) {
+            flags |= TELEMETRY_FLAG_STALE;
+            ESP_LOGW(TAG, "[%lu] MFM384 read failed — uplinking stale-flagged",
+                     (unsigned long)tick);
+        }
+#endif
+        len = payload_encode_mfm384(&s, flags, buf, sizeof(buf));
+        ESP_LOGI(TAG, "[%lu] MFM384 V=%.1f/%.1f/%.1f kW=%.2f kWh=%.2f f=%.2f pf=%.3f -> %u B",
+                 (unsigned long)tick, s.v1n, s.v2n, s.v3n, s.total_kw, s.total_kwh, s.freq,
+                 s.avg_pf, (unsigned)len);
+#elif CONFIG_APP_FIELD_DEVICE_RSFSJT
+        rsfsjt_sample_t s = {0};
+#if CONFIG_APP_FIELD_SIMULATE
+        meter_sim_rsfsjt(tick, &s);
+        flags |= TELEMETRY_FLAG_SIMULATED;
+#else
+        if (meter_read_rsfsjt(UART_NUM_1, unit, &s) != ESP_OK) {
+            flags |= TELEMETRY_FLAG_STALE;
+            ESP_LOGW(TAG, "[%lu] RS-FSJT read failed — uplinking stale-flagged",
+                     (unsigned long)tick);
+        }
+#endif
+        len = payload_encode_rsfsjt(&s, flags, buf, sizeof(buf));
+        ESP_LOGI(TAG, "[%lu] RS-FSJT wind=%.2f m/s -> %u B", (unsigned long)tick, s.wind_mps,
+                 (unsigned)len);
+#endif
+
+        if (len > 0) {
+            lora_send(buf, len);
+        }
+        vTaskDelay(period);
+    }
+}
+
 void app_main(void)
 {
     hold_reserved_pins_floating();
@@ -191,10 +266,5 @@ void app_main(void)
             vTaskDelay(pdMS_TO_TICKS(10000));
     }
 
-    /* Periodic uplink (60 s; AS923 dwell + fair-use friendly). */
-    for (uint32_t n = 0;; ++n) {
-        const uint8_t payload[4] = {0xA5, (uint8_t)(n >> 8), (uint8_t)n, 0x5A};
-        lora_send(payload, sizeof(payload));
-        vTaskDelay(pdMS_TO_TICKS(60000));
-    }
+    run_field_app(); /* sample -> encode -> uplink loop; does not return */
 }

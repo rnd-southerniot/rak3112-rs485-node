@@ -1,0 +1,9 @@
+# Bench profile: REAL RS-FSJT-N01 field app — read the wind sensor + uplink to ChirpStack.
+# Usage (home lab, sensor on CN1 + CRM ChirpStack in range):
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.field-rsfsjt" build flash monitor
+# Reads RS-FSJT (FC03 holding reg 0, uint16, /10 = m/s) at 4800 8N1 unit 1, encodes the ADR-005
+# RS-FSJT payload, and uplinks every 60 s. A failed read uplinks a STALE-flagged payload.
+CONFIG_APP_FIELD_DEVICE_RSFSJT=y
+CONFIG_APP_FIELD_UNIT=1
+CONFIG_APP_FIELD_BAUD=4800
+CONFIG_APP_FIELD_SAMPLE_INTERVAL_S=60

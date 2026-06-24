@@ -1,0 +1,8 @@
+# Bench profile: SIMULATED RS-FSJT field app — no sensor needed, uplinks to ChirpStack.
+# Usage:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.sim-rsfsjt" build flash monitor
+# Joins OTAA then uplinks synthesized wind speed (0.5..9.5 m/s) every 60 s, ADR-005 payload, flagged
+# SIMULATED. Decoder shows device "RS-FSJT-N01". No RS-485 init in this mode.
+CONFIG_APP_FIELD_SIMULATE=y
+CONFIG_APP_FIELD_DEVICE_RSFSJT=y
+CONFIG_APP_FIELD_SAMPLE_INTERVAL_S=60

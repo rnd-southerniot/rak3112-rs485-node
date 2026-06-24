@@ -93,4 +93,50 @@ config APP_MODBUS_POLL_FLOAT_CDAB
         ABCD (default) = big-endian word order; MFM384 reports this (endianness register 40070 = 1).
         Set CDAB only if the reading looks like garbage (wrong word order on some PLCs/meters).
 
+# ---------------------------------------------------------------------------
+# Field application (Phase 6c): sample a device -> encode -> LoRaWAN uplink.
+# This is the NORMAL firmware path (when neither scan nor poll bench mode is set).
+# ---------------------------------------------------------------------------
+
+config APP_FIELD_SIMULATE
+    bool "Field app: use SIMULATED sensor data (no Modbus hardware needed)"
+    default n
+    help
+        When set, the field app synthesizes plausible, time-varying measurements instead of reading
+        a real device over Modbus, and tags uplinks with the SIMULATED flag. Use to exercise the
+        full sample -> payload -> LoRaWAN -> ChirpStack path with no meter attached. RS-485 is not
+        initialised in this mode. Leave OFF for real field firmware.
+
+choice APP_FIELD_DEVICE
+    prompt "Field app: device to sample / simulate"
+    default APP_FIELD_DEVICE_MFM384
+    help
+        Selects which device model the field app samples and which payload it emits.
+
+config APP_FIELD_DEVICE_MFM384
+    bool "SELEC MFM384 energy meter (FC04, CDAB, 9600 8N1)"
+
+config APP_FIELD_DEVICE_RSFSJT
+    bool "RS-FSJT-N01 wind sensor (FC03 reg 0, 4800 8N1)"
+
+endchoice
+
+config APP_FIELD_UNIT
+    int "Field app: Modbus unit ID"
+    range 1 247
+    default 1
+
+config APP_FIELD_BAUD
+    int "Field app: Modbus baud rate (real mode)"
+    default 9600
+    help
+        MFM384 = 9600; RS-FSJT-N01 = 4800. Ignored in simulate mode.
+
+config APP_FIELD_SAMPLE_INTERVAL_S
+    int "Field app: sample + uplink interval (seconds)"
+    range 10 3600
+    default 60
+    help
+        AS923 dwell + fair-use friendly. Keep >= 60 for normal operation.
+
 endmenu

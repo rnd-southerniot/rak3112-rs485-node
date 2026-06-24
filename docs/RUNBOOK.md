@@ -431,6 +431,31 @@ electrical bench check (see below) — not more flashing.
 4. **Meter config:** confirm RS-485/Modbus output is **enabled** in the MFM384 menu (not just baud
    set) and that 9600/8N1/unit-1 are the *active* settings, not defaults shown on a spec sheet.
 
+**Attempt 3 — proven ETS code flashed verbatim, still times out (2026-06-24).** Operator reported
+power/A-B/GND/meter-config all checked OK, and asked to flash the proven `ETS-LORA-Test` code on our
+board changing only DE/RE GPIO34→GPIO21. The full ETS app is a *touchscreen* app (Modbus only runs
+after a TFT tap; never polls headless) and needs the Arduino+TFT_eSPI BSP — so instead a **minimal
+headless port** was built (scratch `mfm_ets_test/`): their **`ModbusMaster` library verbatim**, their
+exact init/read/preTransmission/postTransmission, DE=GPIO21, UART1 TX43/RX44 9600 8N1 unit 1,
+auto-polling FC04 reg 0 + FC03 reg 6, logging over USB-JTAG. arduino-esp32 **3.3.10** resolved/built
+clean against IDF 5.5.4. Flashed to board `3c:dc:75:6f:85:dc`. Result: **`err=0xE2`
+(`ku8MBResponseTimedOut`) on every read, both FCs** — identical to our own firmware. **The proven
+known-good code gets nothing back either ⇒ firmware is exonerated a 4th way (Phase 4 echo + RAK3312
++ ETS source match + ETS code run verbatim). The fault is purely physical, localized to this bench's
+node↔meter link.**
+
+**Cleanest next split (no scope needed — same method that cleared the RS-FSJT sensor): cross-check
+with the USB-RS485 adapter.** Move the adapter onto the *exact* wiring going to the MFM384 (adapter
+A/B/GND where CN1 connects) and run `pymodbus` from the Mac (FC04 reg 0 and FC03 reg 6, 9600 8N1
+unit 1). Two outcomes:
+- **Adapter ALSO can't read the meter** → fault is the **meter or its wiring/power** (not our board).
+  Focus there: re-meter GND continuity, try A/B swap at the meter terminals, confirm the meter's
+  RS-485 port is the right terminal pair and is enabled, consider 120 Ω termination + bias.
+- **Adapter CAN read it but our board can't** → fault is **our board's CN1 / TP8485E path to this
+  meter** (despite Phase 4 echo). Then scope GPIO43(TX)/GPIO21(DE)/CN1 A-B to find where the frame
+  dies. (Note: Phase 4 echo used an adapter with strong internal bias/termination; a bias/termination
+  difference on this meter link is a candidate — ADR-002 left 120 Ω + fail-safe bias external.)
+
 **Remaining Phase 6 (6c):** NVS register-set config, ADR-005 payload schema (compact versioned
 binary + ChirpStack JS codec), encode MFM384 reads into the LoRaWAN uplink, then push/CI/merge/tag.
 

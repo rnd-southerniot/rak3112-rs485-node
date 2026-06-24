@@ -472,6 +472,18 @@ order, 9600 8N1 unit 1.** Profiles updated: `.mfm384-volt` (FC04 reg 0 V1N, CDAB
 reg 58 Total kWh, CDAB). **Bring-up GREEN — our node reads the meter.** Remaining = 6c (NVS register
 set + ADR-005 payload + LoRaWAN uplink + ChirpStack decoder), then push/CI/merge/tag.
 
+**Phase 6c bench — RS-FSJT real read + LoRaWAN uplink GREEN (2026-06-24, home lab).** With the
+RS-FSJT-N01 on CN1: `sdkconfig.defaults.poll-rsfsjt` confirmed the sensor reads (unit 1, FC03 reg 0,
+4800 8N1, zero timeouts) — still air raw 0–4, **blow test raw 33–58 ⇒ ~3.3–5.8 m/s, locking scale at
+raw/10** (÷100 ruled out; `meter_read_rsfsjt` already correct). Then `sdkconfig.defaults.field-rsfsjt`
+(real field app): session restored from Phase 5 NVS (no re-join), `field app: REAL Modbus`,
+`[0] RS-FSJT wind=0.40 m/s -> 5 B`, **`uplink OK (rx window=0)`**, repeating each 60 s — no `-5`, no
+timeouts. ADR-005 RS-FSJT payload `0102000028` (v1, dev=RS-FSJT, flags=0, wind 0x0028=40 ÷100=0.40
+m/s) on fPort 1. **Real sensor → encode → LoRaWAN → ChirpStack path proven for RS-FSJT.** Decoder =
+`tools/chirpstack_mfm384_decoder.js`. MFM384 not available at home → its uplink leg validates via
+`sdkconfig.defaults.sim-mfm384` (same payload/decoder, simulated flag). Remaining to close Phase 6:
+confirm ChirpStack decode render, run the sim-mfm384 uplink, then push/CI/merge/tag.
+
 **Lesson (RS-485 bring-up).** A DE/RE direction-control wiring fault presents as *total silence /
 0 garbage* at every baud/parity — indistinguishable at the protocol layer from an unpowered or
 unwired slave. When the bus is dead-silent in all configs and the framing is known-good, suspect the

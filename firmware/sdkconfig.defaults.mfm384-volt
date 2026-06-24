@@ -1,0 +1,16 @@
+# Bench profile: SELEC MFM384 — poll V1N phase voltage (FC04 reg 0, float32) at 1 Hz.
+# Usage:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.mfm384-volt" build flash monitor
+# Rationale (cross-checked vs southern-rnd/ETS-LORA-Test, same RAK3112+MFM384, tested working):
+# that build reads the MFM384 entirely over FC04 INPUT registers, voltage-first map (V1N @ reg 0).
+# FC04 reg 0 is the best linkcheck: present + non-zero whenever the meter is powered. The raw hex
+# words are logged, so word order is readable by eye (ABCD vs CDAB).
+# CONFIRMED on real hardware (2026-06-24): this meter is CDAB — FC04 reg 0 CDAB = V1N ≈ 50.5 V.
+# (ABCD gave garbage; the RAK3312 "ABCD" note did not hold for this physical meter.)
+CONFIG_APP_MODBUS_POLL_ON_BOOT=y
+CONFIG_APP_MODBUS_POLL_UNIT=1
+CONFIG_APP_MODBUS_POLL_BAUD=9600
+CONFIG_APP_MODBUS_POLL_FC=4
+CONFIG_APP_MODBUS_POLL_REG=0
+CONFIG_APP_MODBUS_POLL_FLOAT=y
+CONFIG_APP_MODBUS_POLL_FLOAT_CDAB=y

@@ -325,6 +325,175 @@ endpoint (`:4000`) returns config only (no telemetry); frame verification must u
 ChirpStack UI/API at `:8080` directly. **Phase 5 uplink milestone: PASS.** (Remaining Phase 5
 sign-off scope — ADR-003 stack / ADR-004 sub-band formal close, payload schema — tracked separately.)
 
+## Phase 6 — Modbus RTU master: device pivot to SELEC MFM384 (2026-06-24)
+
+**Target change.** Phase 6 bring-up retargeted from the RS-FSJT-N01 wind sensor to a **SELEC
+MFM384** 3-phase multifunction meter. Rationale: the RS-FSJT bench was blocked on a sensor↔CN1
+*physical* join (open conductor / no common GND in both A/B orientations — node CN1 TX path itself
+proven byte-perfect in Phase 4). The firmware was never the blocker. The MFM384 is mains/aux-powered
+with its own RS-485 terminals (no separate bus PSU to lose), so it sidesteps that failure mode.
+
+**MFM384 Modbus map** (from the org's proven RAK3312 bring-up, `rnd-southerniot/rak3312-rs485-plan`
+`docs/rak3312/MODBUS_MAP.md`, which reached Gate 8 live publish on this exact meter):
+
+| Read | FC | Register (human → wire) | Type | Notes |
+|---|---|---|---|---|
+| Linkcheck | 0x03 | 40007 → 6 | uint16 | any reply proves the link |
+| Endianness | 0x03 | 40070 → 69 | uint16 | expect `1` = ABCD word order |
+| Total active energy | 0x04 | 30090..30091 → 89..90 | float32 ABCD | kWh |
+
+Serial (org bench known-good): **9600 8N1, unit 1**. MFM384 baud/unit are front-panel configurable,
+so the operator's meter may differ — the scan profile sweeps baud×parity if so.
+
+**Firmware support added this session** (float32 + FC04, on top of the existing 6a/6b framing):
+- `modbus_rtu`: pure `modbus_regs_to_f32(regs, ABCD|CDAB)` — host-tested KAT (`{0x447A,0x0000}` ABCD
+  = 1000.0f). No aliasing UB (memcpy type-pun).
+- Poll bring-up mode now takes a function code (FC03/FC04) and an optional float32 read (2 regs);
+  scan probe register is now configurable.
+
+**Bench bring-up sequence (operator):**
+1. **Wiring:** MFM384 A/B → CN1 A/B, and a **common GND** (meter RS-485 GND ↔ CN1 GND). Confirm the
+   meter is powered (front-panel lit) and in **RTU** mode at its configured baud/unit.
+2. **Linkcheck first** (quick "is it alive", uint16 @ FC03 reg 6):
+   ```bash
+   cd firmware && . ~/esp/esp-idf-v5.5.4/export.sh
+   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.poll" build flash monitor
+   # expect: [n] reg6 = <value> (raw, 0x....)   — a reply = link good. swap A/B if it times out.
+   ```
+3. **If linkcheck times out / unknown baud:** run the scanner (sweeps baud×parity×unit IDs):
+   ```bash
+   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.scan" build flash monitor
+   ```
+   (Set `CONFIG_APP_MODBUS_SCAN_PROBE_REG=6` for the MFM384's known-good holding register.)
+4. **Real measurand** (total active energy, float32 kWh @ FC04 reg 89..90):
+   ```bash
+   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.mfm384" build flash monitor
+   # expect: [n] reg89..90 = 0x........  = <kWh>
+   ```
+   If the float looks like garbage, the meter uses CDAB — set `CONFIG_APP_MODBUS_POLL_FLOAT_CDAB=y`.
+
+The old RS-FSJT profile is preserved as `sdkconfig.defaults.poll-rsfsjt` (4800 8N1, FC03 reg 0).
+
+**Attempt 1 — scan, MFM384 not reached (2026-06-24).** Flashed `sdkconfig.defaults.scan` to project
+board MAC `3c:dc:75:6f:85:dc` (ESP32-S3R8, 8MB octal PSRAM OK, native USB `/dev/cu.usbmodem11301`).
+Full sweep ran clean: 18 combos (9600/4800/19200/38400/57600/115200 × 8N1/8E1/8O1), IDs 1–10, FC03
+@reg 6, 300 ms timeout → **0 devices, 0 garbage in every combo**. Firmware/board healthy (scan
+executed start to finish). `0 garbage` everywhere ⇒ no malformed bytes received at any baud, i.e.
+**no electrical return path or no responder** — NOT a baud/parity mismatch (that would surface as
+garbage). Distinguishing causes left to the operator: (a) wiring — A/B on CN1, common GND, meter
+powered + in Modbus RTU mode; (b) unit ID > 10 (sweep capped at 10; wrong-slave = silence by spec).
+**Fastest disambiguation: read baud/parity/slave-ID directly off the MFM384 front-panel setup menu**
+and set the poll profile to those exact values, then widen `CONFIG_APP_MODBUS_SCAN_ID_HI` if needed.
+
+**Hardware cross-check vs proven reference (2026-06-24).** The org's `rak3312-rs485-plan`
+`examples/rak3312_mfm384` (reached Gate 8 live on this exact meter) was reviewed line-by-line. Our
+firmware matches it in every protocol dimension: TX=GPIO43, RX=GPIO44, DE=GPIO21, DE polarity
+HIGH=TX/LOW=RX, 9600 8N1 unit 1, linkcheck FC03 reg 6, energy FC04 reg 89 qty 2 with float
+`u32=(hi<<16)|lo` (= our ABCD word order). **One difference, and it does NOT apply to us:** the
+RAK3312 reference drives RS-485 through a **RAK5802 module with a separate ENABLE pin on GPIO14
+(WB_IO2) that must be HIGH before any Modbus traffic** — if low, that module is disabled and the bus
+goes totally silent (our exact symptom). Our board has **no such enable pin**: RAK3112 + onboard
+TP8485E, DE/RE on GPIO21 only, and Phase 4 echo proved that path works to a USB-RS485 adapter with
+GPIO21 alone. So GPIO14 is RAK5802-specific, irrelevant here. **Net: firmware confirmed correct
+(twice — Phase 4 echo + reference match); the silence is purely the MFM384↔CN1 physical link.** The
+reference's own troubleshooting reduces to "confirm A/B wiring and common GND" — which is the bench
+action. SELEC MFM384 RS-485 terminals may be labeled opposite to CN1 A/B → try both orientations.
+
+**Attempt 2 — FC03 + FC04 polls, still silent (2026-06-24).** Operator confirmed meter target
+9600 / unit 1 / parity none. Flashed `sdkconfig.defaults.poll` (FC03 reg 6, linkcheck) → steady
+`timeout (st=-2)`, 0 bytes. Then a **second proven reference** was reviewed:
+`southern-rnd/ETS-LORA-Test/.../rak3112_ets_careflow_anemometer_espidf` — **same RAK3112 + same
+MFM384, ESP-IDF, tested working**. It reads the MFM384 **entirely over FC04 input registers**
+(voltage-first map: V1N @ reg 0, …, Total kWh @ reg 58), float via `memcpy` of
+`u32=(hi<<16)|lo` with **first register = LOW word (CDAB)** — note this conflicts with the RAK3312
+gate3 map (energy @ reg 89, first register = HIGH word = ABCD); the two proven repos disagree on
+both register map and word order, so when bytes finally flow we must try FC04, both maps, and both
+word orders. Pins/baud/DE-polarity all match ours (TX43/RX44, 9600 8N1, HIGH=TX). DE pin differs
+(ETS=GPIO34) but that's a *different carrier* (TFT/touch/RFID board); our DE=GPIO21 is Phase-4-proven
+(echo 256/256 — impossible unless GPIO21 drives our TP8485E) and confirmed in this boot log
+(`UART1 up: TX=43 RX=44 DE/RE=21`). Acting on the FC04 finding, flashed `sdkconfig.defaults.mfm384-volt`
+(FC04 reg 0, float32) → **still `timeout (st=-2)`, 0 bytes**. **Verdict: function code is NOT the
+cause; the meter returns zero bytes for both FC03 and FC04 at the swept baud/parity. Firmware
+exonerated three independent ways (Phase 4 echo + RAK3312 + ETS). Blocker is purely physical /
+meter-not-transmitting.** No firmware change can turn zero returned bytes into data. Next is an
+electrical bench check (see below) — not more flashing.
+
+**Electrical bench plan (operator — localizes node-TX vs meter-reply vs wiring):**
+1. **Is the MFM384 actually wired to CN1 and powered right now?** It needs its aux/line supply; an
+   unpowered meter is dead-silent. Three timeout flashes with proven-correct firmware most often
+   means the bus isn't truly connected/powered.
+2. **A/B + common GND:** MFM384 A→CN1 A, B→CN1 B (try the swap — SELEC labels may be reversed), and
+   meter RS-485 GND/COM → CN1 GND. Verify each with a multimeter continuity check.
+3. **Scope/Saleae** (the ground-truth detector, per the RS-FSJT lesson) on **GPIO43 (TX)**,
+   **GPIO21 (DE)**, and **CN1 A/B** during a poll tick: confirm (a) a TX frame leaves on GPIO43,
+   (b) DE pulses high around it, (c) the A/B differential actually swings, (d) whether the meter
+   ever drives a reply. This isolates node-TX vs meter-reply vs cabling in one capture.
+4. **Meter config:** confirm RS-485/Modbus output is **enabled** in the MFM384 menu (not just baud
+   set) and that 9600/8N1/unit-1 are the *active* settings, not defaults shown on a spec sheet.
+
+**Attempt 3 — proven ETS code flashed verbatim, still times out (2026-06-24).** Operator reported
+power/A-B/GND/meter-config all checked OK, and asked to flash the proven `ETS-LORA-Test` code on our
+board changing only DE/RE GPIO34→GPIO21. The full ETS app is a *touchscreen* app (Modbus only runs
+after a TFT tap; never polls headless) and needs the Arduino+TFT_eSPI BSP — so instead a **minimal
+headless port** was built (scratch `mfm_ets_test/`): their **`ModbusMaster` library verbatim**, their
+exact init/read/preTransmission/postTransmission, DE=GPIO21, UART1 TX43/RX44 9600 8N1 unit 1,
+auto-polling FC04 reg 0 + FC03 reg 6, logging over USB-JTAG. arduino-esp32 **3.3.10** resolved/built
+clean against IDF 5.5.4. Flashed to board `3c:dc:75:6f:85:dc`. Result: **`err=0xE2`
+(`ku8MBResponseTimedOut`) on every read, both FCs** — identical to our own firmware. **The proven
+known-good code gets nothing back either ⇒ firmware is exonerated a 4th way (Phase 4 echo + RAK3312
++ ETS source match + ETS code run verbatim). The fault is purely physical, localized to this bench's
+node↔meter link.**
+
+**Cleanest next split (no scope needed — same method that cleared the RS-FSJT sensor): cross-check
+with the USB-RS485 adapter.** Move the adapter onto the *exact* wiring going to the MFM384 (adapter
+A/B/GND where CN1 connects) and run `pymodbus` from the Mac (FC04 reg 0 and FC03 reg 6, 9600 8N1
+unit 1). Two outcomes:
+- **Adapter ALSO can't read the meter** → fault is the **meter or its wiring/power** (not our board).
+  Focus there: re-meter GND continuity, try A/B swap at the meter terminals, confirm the meter's
+  RS-485 port is the right terminal pair and is enabled, consider 120 Ω termination + bias.
+- **Adapter CAN read it but our board can't** → fault is **our board's CN1 / TP8485E path to this
+  meter** (despite Phase 4 echo). Then scope GPIO43(TX)/GPIO21(DE)/CN1 A-B to find where the frame
+  dies. (Note: Phase 4 echo used an adapter with strong internal bias/termination; a bias/termination
+  difference on this meter link is a candidate — ADR-002 left 120 Ω + fail-safe bias external.)
+
+**Attempt 4 — RESOLVED: DE/RE wiring fault; MFM384 read live (2026-06-24).** Operator found and
+fixed a **DE/RE connection issue** at the bench. Re-monitored the still-flashed ETS-port test →
+**immediate success**: `FC04 reg0 OK: 0x424A51EC = 50.58 (V1N)` and `FC03 reg6 OK: 350` every cycle,
+zero timeouts. The DE/RE fault was the entire blocker — with the transceiver never switching
+direction correctly, the meter never saw a valid frame (or the node never released to RX). **Firmware
+was correct all along (proven 5 ways).** Reflashed **our** firmware (`sdkconfig.defaults.mfm384-volt`,
+FC04 reg 0 float) → first attempt showed garbage floats with raw words like `0xC28F424A`; the high
+word `424A` (voltage ~50 = 0x424A…) sat in the **second** register ⇒ this meter transmits **low word
+first = CDAB**, not ABCD. The ETS code reads `buffer[0]` as the low word (CDAB) — correct for this
+meter; the RAK3312 "ABCD" note did NOT hold here. Set `CONFIG_APP_MODBUS_POLL_FLOAT_CDAB=y` → **our
+firmware reads V1N ≈ 50.5 V stable, zero timeouts** (`0xD70A4249 = 50.460` … `0x3333424A = 50.550`).
+**Locked facts for this MFM384: FC04 input registers, ETS voltage-first map (reg 0 = V1N), CDAB word
+order, 9600 8N1 unit 1.** Profiles updated: `.mfm384-volt` (FC04 reg 0 V1N, CDAB), `.mfm384` (FC04
+reg 58 Total kWh, CDAB). **Bring-up GREEN — our node reads the meter.** Remaining = 6c (NVS register
+set + ADR-005 payload + LoRaWAN uplink + ChirpStack decoder), then push/CI/merge/tag.
+
+**Phase 6c bench — RS-FSJT real read + LoRaWAN uplink GREEN (2026-06-24, home lab).** With the
+RS-FSJT-N01 on CN1: `sdkconfig.defaults.poll-rsfsjt` confirmed the sensor reads (unit 1, FC03 reg 0,
+4800 8N1, zero timeouts) — still air raw 0–4, **blow test raw 33–58 ⇒ ~3.3–5.8 m/s, locking scale at
+raw/10** (÷100 ruled out; `meter_read_rsfsjt` already correct). Then `sdkconfig.defaults.field-rsfsjt`
+(real field app): session restored from Phase 5 NVS (no re-join), `field app: REAL Modbus`,
+`[0] RS-FSJT wind=0.40 m/s -> 5 B`, **`uplink OK (rx window=0)`**, repeating each 60 s — no `-5`, no
+timeouts. ADR-005 RS-FSJT payload `0102000028` (v1, dev=RS-FSJT, flags=0, wind 0x0028=40 ÷100=0.40
+m/s) on fPort 1. **Real sensor → encode → LoRaWAN → ChirpStack path proven for RS-FSJT.** Decoder =
+`tools/chirpstack_mfm384_decoder.js`. MFM384 not available at home → its uplink leg validates via
+`sdkconfig.defaults.sim-mfm384` (same payload/decoder, simulated flag). Remaining to close Phase 6:
+confirm ChirpStack decode render, run the sim-mfm384 uplink, then push/CI/merge/tag.
+
+**Lesson (RS-485 bring-up).** A DE/RE direction-control wiring fault presents as *total silence /
+0 garbage* at every baud/parity — indistinguishable at the protocol layer from an unpowered or
+unwired slave. When the bus is dead-silent in all configs and the framing is known-good, suspect the
+**direction pin's wiring/continuity** early, alongside A/B and GND. Running a second, independently-
+proven master (the ETS `ModbusMaster` port) let us assert "firmware is not the problem" with
+confidence *before* the wiring fix — and the same harness immediately confirmed the fix.
+
+**Remaining Phase 6 (6c):** NVS register-set config, ADR-005 payload schema (compact versioned
+binary + ChirpStack JS codec), encode MFM384 reads into the LoRaWAN uplink, then push/CI/merge/tag.
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

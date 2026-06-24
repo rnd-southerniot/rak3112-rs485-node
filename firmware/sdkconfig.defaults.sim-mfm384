@@ -1,0 +1,9 @@
+# Bench profile: SIMULATED MFM384 field app — no meter needed, uplinks to ChirpStack.
+# Usage (home lab, with CRM ChirpStack 10.10.8.140 in range):
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.sim-mfm384" build flash monitor
+# Joins OTAA then uplinks synthesized MFM384 telemetry (~230V 3-phase, ~5kW, climbing kWh, ~50Hz,
+# ~0.95 PF), every 60 s, ADR-005 payload, flagged SIMULATED. Verify decode with
+# tools/chirpstack_mfm384_decoder.js. No RS-485 init in this mode.
+CONFIG_APP_FIELD_SIMULATE=y
+CONFIG_APP_FIELD_DEVICE_MFM384=y
+CONFIG_APP_FIELD_SAMPLE_INTERVAL_S=60

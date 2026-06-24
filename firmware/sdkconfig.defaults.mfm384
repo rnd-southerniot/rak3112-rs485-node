@@ -1,0 +1,14 @@
+# Bench profile: SELEC MFM384 — poll Total active energy (float32) at 1 Hz.
+# Usage:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.mfm384" build flash monitor
+# Confirmed on real hardware (2026-06-24): this meter uses the ETS voltage-first FC04 map and CDAB
+# word order (NOT the RAK3312 reg-89/ABCD map). Total kWh = FC04 input reg 58 (per ETS param map).
+# Run sdkconfig.defaults.mfm384-volt first (FC04 reg 0 = V1N ≈ live voltage) to confirm the link.
+# Note: on a bench with no real load the accumulated energy may read ~0.000 kWh — that's expected.
+CONFIG_APP_MODBUS_POLL_ON_BOOT=y
+CONFIG_APP_MODBUS_POLL_UNIT=1
+CONFIG_APP_MODBUS_POLL_BAUD=9600
+CONFIG_APP_MODBUS_POLL_FC=4
+CONFIG_APP_MODBUS_POLL_REG=58
+CONFIG_APP_MODBUS_POLL_FLOAT=y
+CONFIG_APP_MODBUS_POLL_FLOAT_CDAB=y

@@ -1,0 +1,11 @@
+# Bench profile: build the Modbus bus scanner instead of the normal LoRaWAN app.
+# Usage:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.scan" build flash monitor
+# Scans RS-485 (CN1) unit IDs sweeping common bauds x {8N1,8E1,8O1} and logs which answer.
+# Probe register 6 = MFM384 linkcheck holding reg (40007); a Modbus exception still counts as
+# present, so this also discovers other devices. Widen ID range below if unit 1-10 finds nothing.
+CONFIG_APP_MODBUS_SCAN_ON_BOOT=y
+CONFIG_APP_MODBUS_SCAN_ID_LO=1
+CONFIG_APP_MODBUS_SCAN_ID_HI=10
+CONFIG_APP_MODBUS_SCAN_TIMEOUT_MS=300
+CONFIG_APP_MODBUS_SCAN_PROBE_REG=6

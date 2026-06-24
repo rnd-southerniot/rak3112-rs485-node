@@ -1,0 +1,142 @@
+menu "rak3112-rs485-node app"
+
+config APP_MODBUS_SCAN_ON_BOOT
+    bool "Bench: run a Modbus RTU bus scan at boot (instead of LoRaWAN)"
+    default n
+    help
+        Bring-up tool. When set, app_main initialises RS-485 and scans Modbus unit IDs
+        (sweeping common baud rates, starting at 9600 8N1), logging which IDs answer —
+        a valid reply OR a Modbus exception both count as "present". It does NOT join
+        LoRaWAN in this mode. Leave OFF for normal field firmware.
+
+config APP_MODBUS_SCAN_ID_LO
+    int "Scan: lowest unit ID"
+    depends on APP_MODBUS_SCAN_ON_BOOT
+    range 1 247
+    default 1
+    help
+        Modbus unit IDs are 1-247; ID 0 is broadcast (never replies), so the scan starts at 1.
+
+config APP_MODBUS_SCAN_ID_HI
+    int "Scan: highest unit ID"
+    depends on APP_MODBUS_SCAN_ON_BOOT
+    range 1 247
+    default 10
+
+config APP_MODBUS_SCAN_TIMEOUT_MS
+    int "Scan: per-probe response timeout (ms)"
+    depends on APP_MODBUS_SCAN_ON_BOOT
+    range 50 2000
+    default 300
+
+config APP_MODBUS_SCAN_PROBE_REG
+    int "Scan: FC03 probe register (wire address)"
+    depends on APP_MODBUS_SCAN_ON_BOOT
+    default 0
+    help
+        Holding-register wire address each probe reads (1 register, FC03). 0 is fine for most
+        devices; for a SELEC MFM384 use its linkcheck register 6 (40007), which is a known-good
+        readable holding register. A Modbus *exception* still counts the device as present, so the
+        exact address rarely matters for discovery.
+
+config APP_MODBUS_POLL_ON_BOOT
+    bool "Bench: continuously poll one Modbus register at boot (instead of LoRaWAN)"
+    default n
+    help
+        Bring-up tool. Reads one register set from a fixed unit at 1 Hz (8N1) and logs the value
+        (or timeout/exception). Supports FC03 (holding) / FC04 (input) and, for meters like the
+        SELEC MFM384, a 32-bit IEEE-754 float spanning 2 registers. Use for live A/B-swap / wiring
+        trial-and-error against a known device. Does NOT join LoRaWAN. Leave OFF for field firmware.
+
+config APP_MODBUS_POLL_UNIT
+    int "Poll: unit ID"
+    depends on APP_MODBUS_POLL_ON_BOOT
+    range 1 247
+    default 1
+
+config APP_MODBUS_POLL_BAUD
+    int "Poll: baud rate"
+    depends on APP_MODBUS_POLL_ON_BOOT
+    default 9600
+    help
+        SELEC MFM384 bench default is 9600 8N1; the RS-FSJT-N01 wind sensor uses 4800.
+
+config APP_MODBUS_POLL_FC
+    int "Poll: function code (3 = holding, 4 = input registers)"
+    depends on APP_MODBUS_POLL_ON_BOOT
+    range 3 4
+    default 3
+    help
+        MFM384 linkcheck/endianness registers are FC03; its float measurands (e.g. total active
+        energy at 30090) are FC04 input registers.
+
+config APP_MODBUS_POLL_REG
+    int "Poll: register wire address"
+    depends on APP_MODBUS_POLL_ON_BOOT
+    default 6
+    help
+        Wire address (40007 -> 6, 30090 -> 89). Default 6 = MFM384 linkcheck holding register.
+
+config APP_MODBUS_POLL_FLOAT
+    bool "Poll: interpret 2 registers as an IEEE-754 float32"
+    depends on APP_MODBUS_POLL_ON_BOOT
+    default n
+    help
+        When set, the poll reads 2 registers and decodes a float32 (e.g. MFM384 energy in kWh).
+        When clear, it reads a single uint16.
+
+config APP_MODBUS_POLL_FLOAT_CDAB
+    bool "Poll: float word order is CDAB (word-swapped) instead of ABCD"
+    depends on APP_MODBUS_POLL_FLOAT
+    default n
+    help
+        ABCD (default) = big-endian word order; MFM384 reports this (endianness register 40070 = 1).
+        Set CDAB only if the reading looks like garbage (wrong word order on some PLCs/meters).
+
+# ---------------------------------------------------------------------------
+# Field application (Phase 6c): sample a device -> encode -> LoRaWAN uplink.
+# This is the NORMAL firmware path (when neither scan nor poll bench mode is set).
+# ---------------------------------------------------------------------------
+
+config APP_FIELD_SIMULATE
+    bool "Field app: use SIMULATED sensor data (no Modbus hardware needed)"
+    default n
+    help
+        When set, the field app synthesizes plausible, time-varying measurements instead of reading
+        a real device over Modbus, and tags uplinks with the SIMULATED flag. Use to exercise the
+        full sample -> payload -> LoRaWAN -> ChirpStack path with no meter attached. RS-485 is not
+        initialised in this mode. Leave OFF for real field firmware.
+
+choice APP_FIELD_DEVICE
+    prompt "Field app: device to sample / simulate"
+    default APP_FIELD_DEVICE_MFM384
+    help
+        Selects which device model the field app samples and which payload it emits.
+
+config APP_FIELD_DEVICE_MFM384
+    bool "SELEC MFM384 energy meter (FC04, CDAB, 9600 8N1)"
+
+config APP_FIELD_DEVICE_RSFSJT
+    bool "RS-FSJT-N01 wind sensor (FC03 reg 0, 4800 8N1)"
+
+endchoice
+
+config APP_FIELD_UNIT
+    int "Field app: Modbus unit ID"
+    range 1 247
+    default 1
+
+config APP_FIELD_BAUD
+    int "Field app: Modbus baud rate (real mode)"
+    default 9600
+    help
+        MFM384 = 9600; RS-FSJT-N01 = 4800. Ignored in simulate mode.
+
+config APP_FIELD_SAMPLE_INTERVAL_S
+    int "Field app: sample + uplink interval (seconds)"
+    range 10 3600
+    default 60
+    help
+        AS923 dwell + fair-use friendly. Keep >= 60 for normal operation.
+
+endmenu

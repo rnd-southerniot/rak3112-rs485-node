@@ -47,3 +47,6 @@ firmware/.env.*
 
 # Generated LoRaWAN credentials header (contains AppKey) — never commit
 firmware/main/lora_credentials.h
+
+# clangd / editor index cache
+.cache/

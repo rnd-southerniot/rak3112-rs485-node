@@ -21,7 +21,8 @@ typedef struct {
     int tx_gpio;           /* PIN_RS485_TX  (GPIO43) */
     int rx_gpio;           /* PIN_RS485_RX  (GPIO44) */
     int de_re_gpio;        /* PIN_RS485_DE_RE (GPIO21) — driven as inverted RTS */
-    int baud_rate;         /* 8N1 */
+    int baud_rate;         /* line rate */
+    uart_parity_t parity;  /* UART_PARITY_DISABLE (0 = 8N1, default) / _EVEN (8E1) / _ODD (8O1) */
     size_t rx_buffer_size; /* driver RX ring (>= 2*UART_HW_FIFO_LEN) */
 } rs485_config_t;
 

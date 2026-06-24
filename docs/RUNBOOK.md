@@ -456,6 +456,29 @@ unit 1). Two outcomes:
   dies. (Note: Phase 4 echo used an adapter with strong internal bias/termination; a bias/termination
   difference on this meter link is a candidate — ADR-002 left 120 Ω + fail-safe bias external.)
 
+**Attempt 4 — RESOLVED: DE/RE wiring fault; MFM384 read live (2026-06-24).** Operator found and
+fixed a **DE/RE connection issue** at the bench. Re-monitored the still-flashed ETS-port test →
+**immediate success**: `FC04 reg0 OK: 0x424A51EC = 50.58 (V1N)` and `FC03 reg6 OK: 350` every cycle,
+zero timeouts. The DE/RE fault was the entire blocker — with the transceiver never switching
+direction correctly, the meter never saw a valid frame (or the node never released to RX). **Firmware
+was correct all along (proven 5 ways).** Reflashed **our** firmware (`sdkconfig.defaults.mfm384-volt`,
+FC04 reg 0 float) → first attempt showed garbage floats with raw words like `0xC28F424A`; the high
+word `424A` (voltage ~50 = 0x424A…) sat in the **second** register ⇒ this meter transmits **low word
+first = CDAB**, not ABCD. The ETS code reads `buffer[0]` as the low word (CDAB) — correct for this
+meter; the RAK3312 "ABCD" note did NOT hold here. Set `CONFIG_APP_MODBUS_POLL_FLOAT_CDAB=y` → **our
+firmware reads V1N ≈ 50.5 V stable, zero timeouts** (`0xD70A4249 = 50.460` … `0x3333424A = 50.550`).
+**Locked facts for this MFM384: FC04 input registers, ETS voltage-first map (reg 0 = V1N), CDAB word
+order, 9600 8N1 unit 1.** Profiles updated: `.mfm384-volt` (FC04 reg 0 V1N, CDAB), `.mfm384` (FC04
+reg 58 Total kWh, CDAB). **Bring-up GREEN — our node reads the meter.** Remaining = 6c (NVS register
+set + ADR-005 payload + LoRaWAN uplink + ChirpStack decoder), then push/CI/merge/tag.
+
+**Lesson (RS-485 bring-up).** A DE/RE direction-control wiring fault presents as *total silence /
+0 garbage* at every baud/parity — indistinguishable at the protocol layer from an unpowered or
+unwired slave. When the bus is dead-silent in all configs and the framing is known-good, suspect the
+**direction pin's wiring/continuity** early, alongside A/B and GND. Running a second, independently-
+proven master (the ETS `ModbusMaster` port) let us assert "firmware is not the problem" with
+confidence *before* the wiring fix — and the same harness immediately confirmed the fix.
+
 **Remaining Phase 6 (6c):** NVS register-set config, ADR-005 payload schema (compact versioned
 binary + ChirpStack JS codec), encode MFM384 reads into the LoRaWAN uplink, then push/CI/merge/tag.
 

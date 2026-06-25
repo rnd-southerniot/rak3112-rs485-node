@@ -184,6 +184,26 @@ config APP_PROVISIONING_CONSOLE
         compiled in or already in NVS (no field re-provisioning).
 
 # ---------------------------------------------------------------------------
+# Phase 7b — power: light-sleep duty-cycling between samples.
+# ---------------------------------------------------------------------------
+
+config APP_LIGHT_SLEEP
+    bool "Power: light-sleep between samples (duty-cycle)"
+    default n
+    help
+        Between sample+uplink cycles the field loop enters manual light-sleep (CPU + peripherals
+        gated, RTC timer wake) instead of a busy vTaskDelay. RAM is retained, so the LoRaWAN session
+        survives (no re-join). The sleep is chunked so the task watchdog keeps getting fed; while it
+        is on, the idle-task watchdog is disabled (manual light-sleep freezes idle by design).
+
+        DEFAULT OFF (Phase 7b): verify on a DC/battery bench with USB DISCONNECTED before enabling
+        by default. With the board USB-powered and the USB-Serial-JTAG console active (VBUS present),
+        esp_light_sleep_start() does not behave cleanly on this ESP32-S3 — the node runs cycle 0 then
+        the console goes dark and cycling can't be observed/confirmed over USB. Field nodes run on
+        battery/DC (no VBUS), which is also the only setup that measures true average current (the
+        7b power gate, OQ-12). Enable + verify there.
+
+# ---------------------------------------------------------------------------
 # Phase 7c — OTA: build tag + a debug bad-image path for the rollback gate.
 # ---------------------------------------------------------------------------
 

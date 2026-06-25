@@ -5,6 +5,7 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_sleep.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "nvs.h"
@@ -238,7 +239,12 @@ static void field_wdt_arm(void)
 {
     esp_task_wdt_config_t cfg = {
         .timeout_ms = 1000u * (uint32_t)CONFIG_APP_TASK_WDT_TIMEOUT_S,
+/* Light-sleep (7b) freezes the idle tasks by design, so don't watch them — only the field task. */
+#if CONFIG_APP_LIGHT_SLEEP
+        .idle_core_mask = 0,
+#else
         .idle_core_mask = (1u << portNUM_PROCESSORS) - 1u,
+#endif
         .trigger_panic = true,
     };
     /* IDF already init'd the TWDT (CONFIG_ESP_TASK_WDT_INIT) — reconfigure to our timeout. */
@@ -253,14 +259,22 @@ static void field_wdt_arm(void)
              CONFIG_APP_TASK_WDT_TIMEOUT_S);
 }
 
-/* vTaskDelay split into <=2 s chunks, feeding the WDT each chunk so the long inter-sample sleep
- * never starves the watchdog (a hang in the work section above still trips it). */
+/* Inter-sample wait split into <=2 s chunks, feeding the WDT each chunk so the long sleep never
+ * starves the watchdog (a hang in the work section above still trips it). With light-sleep (7b)
+ * each chunk is a manual light-sleep (CPU + peripherals gated, RTC timer wake; RAM retained so the
+ * LoRaWAN session survives); otherwise a plain vTaskDelay. */
 static void wdt_fed_delay(TickType_t total)
 {
     const TickType_t chunk = pdMS_TO_TICKS(2000);
     while (total > 0) {
         const TickType_t d = total < chunk ? total : chunk;
+#if CONFIG_APP_LIGHT_SLEEP
+        ESP_ERROR_CHECK(
+            esp_sleep_enable_timer_wakeup((uint64_t)(d * portTICK_PERIOD_MS) * 1000ULL));
+        esp_light_sleep_start();
+#else
         vTaskDelay(d);
+#endif
         ESP_ERROR_CHECK(esp_task_wdt_reset());
         total -= d;
     }
@@ -362,6 +376,11 @@ static void run_field_app(void)
 #endif
 
     field_wdt_arm();
+#if CONFIG_APP_LIGHT_SLEEP
+    ESP_LOGI(TAG, "light-sleep duty-cycle ON — CPU sleeps between samples (session retained)");
+#else
+    ESP_LOGI(TAG, "light-sleep OFF — busy-wait between samples");
+#endif
 
     for (uint32_t tick = 0;; ++tick) {
         esp_task_wdt_reset();

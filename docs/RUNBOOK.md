@@ -689,6 +689,51 @@ creds; the partition/rollback foundation it would sit on is now in place.
 - *linenoise eats the first command.* Over a script the REPL enters dumb mode on first contact and
   swallows the first line; send a throwaway `ota-status` to prime it before the real command.
 
+## Phase 7b — Power: light-sleep duty-cycling (2026-06-25) · IMPLEMENTED, power-gate deferred
+
+**Goal (7b).** Cut average current by light-sleeping between samples. Per operator decision this pass
+is **functional only, no current target** (OQ-12 open) — a true average-current measurement needs the
+board on DC/battery with USB removed, which wasn't set up.
+
+**Implementation.** `CONFIG_APP_LIGHT_SLEEP` (Kconfig, **default OFF**). When on, `wdt_fed_delay()`
+makes each ≤2 s chunk a manual `esp_light_sleep_start()` (timer wakeup) instead of `vTaskDelay` —
+RAM is retained so the LoRaWAN session survives with no re-join. Chunking keeps the task watchdog
+fed; the **idle-task watchdog is disabled when light-sleep is on** (manual light-sleep freezes idle
+by design, so watching it would false-trip). `field_wdt_arm()` sets `idle_core_mask=0` in that case.
+
+**KEY FINDING — light-sleep wedges the node on USB power (VBUS present).** On this ESP32-S3 with the
+USB-Serial-JTAG console and VBUS applied, the node runs cycle 0, enters light-sleep, and then
+**`esptool` itself can no longer connect** ("No serial data received") — a genuine device-level wedge,
+not just a dark console. Recovery required **plug-in-while-holding SW2(BOOT)** → USB download mode →
+reflash a light-sleep-OFF image. (Plain power-cycle and BOOT+RESET-then-replug were not enough; the
+clean download-on-plug was.) This is why `APP_LIGHT_SLEEP` defaults OFF: **enable + verify only on a
+DC/battery bench with USB disconnected** — which is also the only setup that measures true average
+current (OQ-12). Field nodes run on battery (no VBUS), where light-sleep is expected to behave.
+
+**KEY FINDING — pyserial DTR/RTS held the chip in reset.** Opening the USB-Serial-JTAG port with
+pyserial's default `dtr=True/rts=True` drives BOOT/EN and **holds the ESP32-S3 in reset/download** →
+"console produces 0 bytes" even on a healthy device. Fix: open with `dtr=False, rts=False`
+(`serial.Serial()` then set before/after open). This cost real time masquerading as a device hang.
+
+**What was verified (HIL, project board, light-sleep OFF baseline).** Recovered node: `boot #38`,
+OTA layout intact (`ota_0` valid, tag A), `[creds:NVS]`, `session restored`, `field app: REAL Modbus
+RS-FSJT … 4800 8N1, 20s [cfg:NVS]`, **two+ cycles** (`[0]`@2.0 s + uplink@4.4 s; `[1]`@24.9 s +
+uplink@27.4 s) — continuous field-loop operation, uplinks, session-preservation, monotonic timer (no
+reboot). This is the busy-wait baseline; light-sleep *cycling* could not be observed on USB (wedge).
+
+**RS-FSJT real read (Phase 6 follow-up).** With the wind sensor on CN1 the read **succeeded**
+pre-disturbance (`RS-FSJT wind=0.00 m/s` in still air, **no "read failed"** — contrast Phase 6's total
+silence) → the real read path is closed. After the recovery power-cycles the sensor went **stale**
+(`read failed`) — a bench/wiring state (re-seat + let it settle), not firmware.
+
+**Status: 7b IMPLEMENTED; functional cycling + average-current (OQ-12) DEFERRED to a DC/battery
+(no-VBUS) bench.** Default firmware is light-sleep OFF (the proven 7a/7c busy-wait behaviour);
+light-sleep is opt-in for the battery bench.
+
+**Lessons.** (1) Don't run light-sleep with the USB-Serial-JTAG console + VBUS — it wedges; verify on
+battery. (2) De-assert DTR/RTS when reading a USJ port from a script. (3) Recover a wedged USJ board
+with plug-in-while-holding-BOOT (download-on-plug), not just reset.
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

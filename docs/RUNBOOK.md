@@ -618,6 +618,77 @@ to 7d (read path proven Phase 6).
   Same class as the Phase-7a `SDKCONFIG_DEFAULTS` cache stale. Verify a new Kconfig option lands in
   `sdkconfig` before trusting the build.
 
+## Phase 7c — OTA: dual-slot partitions + rollback (2026-06-25)
+
+**Goal (7c).** Make field updates safe: a dual-slot (ota_0/ota_1) partition layout with bootloader
+**app rollback**, so a bad image automatically reverts to the last good one. The headline *risk* is
+the partition-table change (a destructive flash-layout edit); the network *transport*
+(WiFi/HTTPS or FUOTA, OQ-10) is deferred — it's also blocked on the bench (no WiFi creds, like 7b's
+current rig), so 7c exercises the rollback machinery via host-side image staging (`parttool` +
+`esp_ota_set_boot_partition`), which drives the *same* esp_ota state machine a network OTA would.
+
+**Design — no destructive erase.** `firmware/partitions.csv` keeps **nvs at the default
+0x9000/0x6000**, so the 7d provisioning (`prov`) and LoRaWAN nonces (`lorawan`) survive the layout
+change — `idf.py flash` rewrites bootloader + table + `ota_0` + `otadata` but leaves nvs intact.
+Layout: `nvs@0x9000(24K) · otadata@0xf000(8K) · phy@0x11000(4K) · ota_0@0x20000(3M) ·
+ota_1@0x320000(3M)`. `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`.
+
+`ota.c`: logs the running slot + state + build tag at boot; `ota_mark_valid()` cancels the pending
+rollback once the app reaches healthy code (no-op for a directly-flashed image); console commands
+`ota-status` and `ota-activate <0|1>` (the latter calls `esp_ota_set_boot_partition` → PENDING_VERIFY,
+rollback armed → restart). `CONFIG_APP_BUILD_TAG` (A/B) tells builds apart; `CONFIG_APP_DEBUG_OTA_BAD`
+builds an image that `abort()`s before mark-valid (profile `sdkconfig.defaults.ota-bad`).
+
+**Hardware safety.** Backed up `0x0..0x110000` (bootloader+table+nvs+phy+app, 1.11 MB) before the
+first layout flash — restore with `esptool write_flash 0x0 <backup>`. Project board MAC
+`3c:dc:75:6f:85:dc`.
+
+**Smoke gate — all three conditions PASS (HIL, project board).**
+
+1. *Layout flash, nvs preserved.* After flashing the OTA layout (no erase):
+   ```
+   W (900) ota: running slot=ota_0 state=valid tag='A'
+   I (1506) lora: OTAA: DevEUI=3cdc75fffe6f85dc … [creds:NVS]
+   I (1518) app: field app: REAL Modbus MFM384 … 60s interval [cfg:NVS]
+   ```
+   `[creds:NVS]` + `[cfg:NVS]` confirm the 7d provisioning survived the partition change.
+
+2. *OTA to ota_1, marks valid, survives reset.* Staged build **B** into ota_1 (`parttool
+   write_partition --partition-name ota_1 --input app_B.bin`), `ota-activate 1`:
+   ```
+   OK boot -> ota_1 (pending-verify, rollback armed) — restarting
+   W (940) ota: ota_1 marked VALID (was pending-verify): ESP_OK
+   W (879) ota: running slot=ota_1 state=valid tag='B'   ← after reset #1 AND #2 (persisted)
+   ```
+
+3. *Bad image rolls back.* Staged the **BAD** image (`abort()` before mark-valid) into the inactive
+   ota_0, `ota-activate 0`:
+   ```
+   OK boot -> ota_0 (pending-verify, rollback armed) — restarting
+   E (849) app: DEBUG: bad OTA image — aborting before mark-valid (7c rollback test)
+   abort() was called at PC 0x42007c67 on core 0
+   W (903) ota: running slot=ota_1 state=valid tag='B'   ← bootloader rolled back to the good slot
+   ```
+   Node fully recovered on ota_1/B: `[creds:NVS]` join + `uplink OK`; `ota-status` →
+   `running=ota_1 boot=ota_1 next-slot=ota_0`.
+
+**Result: 7c GREEN.** Dual-slot + rollback proven on hardware; nvs/provisioning preserved across the
+layout change. Default (tag A) re-flashed → clean `running slot=ota_0 state=valid` production state.
+Production binary SHA-256 `5d503aced11a6dba1f0572e0af414b3ac1e0c47eaf75cbf9bb3bde972ec3da11`.
+**Deferred (OQ-10):** the network OTA downloader (WiFi/HTTPS, then FUOTA) — blocked on bench WiFi
+creds; the partition/rollback foundation it would sit on is now in place.
+
+**Lessons.**
+- *Keep nvs put across a partition change.* Holding nvs at its existing offset/size turned a
+  "forces a full erase" step into a non-destructive flash — provisioning + LoRaWAN nonces survived,
+  no re-join, no re-provision. Worth designing the table around.
+- *`SDKCONFIG_DEFAULTS` cache stickiness bites again.* After building with an overlay, a plain
+  `idf.py build` reused the cached overlay path and silently produced a **BAD** image labelled as the
+  default. Always `fullclean` (or pass `-DSDKCONFIG_DEFAULTS=` explicitly) when switching back to the
+  production config, and verify `CONFIG_APP_BUILD_TAG` / `CONFIG_APP_DEBUG_OTA_BAD` before flashing.
+- *linenoise eats the first command.* Over a script the REPL enters dumb mode on first contact and
+  swallows the first line; send a throwaway `ota-status` to prime it before the real command.
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

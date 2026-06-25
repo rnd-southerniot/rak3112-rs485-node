@@ -14,6 +14,7 @@
 #include "gpio_remap.h"
 #include "lora.h"
 #include "meter.h"
+#include "ota.h"
 #include "payload.h"
 #include "provisioning.h"
 #if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT || !CONFIG_APP_FIELD_SIMULATE
@@ -422,8 +423,15 @@ static void run_field_app(void)
 
 void app_main(void)
 {
+#if CONFIG_APP_DEBUG_OTA_BAD
+    /* 7c rollback gate: crash before mark-valid so an OTA into this image rolls back. */
+    ESP_LOGE(TAG, "DEBUG: bad OTA image — aborting before mark-valid (7c rollback test)");
+    abort();
+#endif
     hold_reserved_pins_floating();
     log_boot_diagnostics();
+    ota_log_boot();
+    ota_mark_valid(); /* booted into app code → healthy; cancel any pending rollback */
 
 #if CONFIG_APP_MODBUS_POLL_ON_BOOT
     run_modbus_poll(); /* bench bring-up mode — does not return */
@@ -433,6 +441,7 @@ void app_main(void)
 
 #if CONFIG_APP_PROVISIONING_CONSOLE
     provisioning_console_start(); /* prov-* REPL on its own task; available in field mode too */
+    ota_register_commands();      /* ota-status / ota-activate on the same console */
 #endif
 
     /* 7d: with no OTAA credentials (empty NVS 'prov' + placeholder compiled key), don't bogus-join

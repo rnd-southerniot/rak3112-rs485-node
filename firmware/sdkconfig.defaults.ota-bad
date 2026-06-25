@@ -1,0 +1,6 @@
+# Phase 7c rollback-gate repro: aborts in app_main before mark-valid, so an OTA into this
+# image rolls back to the previous good slot. Build/stage:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.ota-bad" build
+# NEVER flash as the primary image.
+CONFIG_APP_BUILD_TAG="BAD"
+CONFIG_APP_DEBUG_OTA_BAD=y

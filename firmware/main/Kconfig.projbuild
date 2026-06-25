@@ -183,4 +183,23 @@ config APP_PROVISIONING_CONSOLE
         waits here until creds are written. Turn OFF only for a locked build whose credentials are
         compiled in or already in NVS (no field re-provisioning).
 
+# ---------------------------------------------------------------------------
+# Phase 7c — OTA: build tag + a debug bad-image path for the rollback gate.
+# ---------------------------------------------------------------------------
+
+config APP_BUILD_TAG
+    string "OTA: firmware build tag (logged at boot)"
+    default "A"
+    help
+        A short label logged at boot (and via ota-status) to tell builds apart during OTA tests —
+        e.g. build A into ota_0, build B activated into ota_1.
+
+config APP_DEBUG_OTA_BAD
+    bool "Debug: abort at boot before mark-valid (7c rollback gate)"
+    default n
+    help
+        Builds a deliberately-broken image that aborts in app_main BEFORE marking itself valid, so
+        activating it via OTA leaves it PENDING_VERIFY; on the post-crash reboot the bootloader
+        rolls back to the previous good slot. NEVER ship with this set.
+
 endmenu

@@ -168,4 +168,19 @@ config APP_DEBUG_WDT_STARVE_AFTER
     range 1 20
     default 3
 
+# ---------------------------------------------------------------------------
+# Phase 7d — provisioning: NVS-stored credentials + runtime config.
+# ---------------------------------------------------------------------------
+
+config APP_PROVISIONING_CONSOLE
+    bool "Provisioning: enable the USB-Serial-JTAG prov-* console"
+    default y
+    help
+        Starts a small REPL (prov-lorawan / prov-modbus / prov-show / prov-clear / prov-done) that
+        writes the NVS 'prov' namespace — OTAA credentials + Modbus field config — additively
+        (nonces/session preserved). It is available in field mode too, so a deployed node can be
+        re-pointed (baud/interval/meter) or re-keyed without erasing NVS. An unprovisioned node
+        waits here until creds are written. Turn OFF only for a locked build whose credentials are
+        compiled in or already in NVS (no field re-provisioning).
+
 endmenu

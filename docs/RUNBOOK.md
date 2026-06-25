@@ -550,6 +550,74 @@ and feed-during-wake then).
 Feeding once per multi-second loop forces the timeout above the interval and blinds the dog during the
 sleep; chunked feeding (≤ 2 s) keeps the timeout short while still catching real hangs.
 
+## Phase 7d — Provisioning: NVS credentials + runtime config (2026-06-25)
+
+**Goal (7d).** Move OTAA credentials and Modbus field config out of the compiled image and into NVS,
+so a node is keyed/configured at provisioning time (not build time) — the headline being *no
+compiled-in secrets*. Provision via an on-device console fed by `tools/provision_nvs.py` from
+`firmware/.env` (the same source the SCOMM CRM mints).
+
+**Design.**
+- **NVS `prov` namespace** holds `deveui`/`joineui` (u64), `appkey` (16-byte blob) and Modbus
+  `dev`/`baud`/`par`/`unit`/`intv`. `lora.cpp` prefers NVS creds over the compiled
+  `lora_credentials.h` fallback; `lora_is_provisioned()` is false only when *both* are absent
+  (empty NVS + all-zero placeholder) → the node waits instead of bogus-joining.
+- **Runtime field config** (`app_main.c::load_field_cfg`): NVS `prov` overrides the Kconfig build
+  defaults, and the field loop branches on `device` at **runtime** (both MFM384 and RS-FSJT paths
+  compiled in) — so meter/baud/interval change with no rebuild.
+- **Additive provisioning, nonces preserved.** Provisioning writes only the `prov` namespace; the
+  `lorawan` namespace (DevNonce/session) is untouched — so a re-keyed/re-pointed node still does
+  `session restored (no re-join)` with no DevNonce regression (the failure mode a full NVS-image
+  overwrite would cause). This is why provisioning is a console (additive) rather than a
+  `parttool write_partition` (whole-partition overwrite).
+- **Provisioning console** (`provisioning.c`, `CONFIG_APP_PROVISIONING_CONSOLE=y`): a USB-Serial-JTAG
+  REPL (`prov-lorawan` / `prov-modbus` / `prov-show` / `prov-clear` / `prov-done`) on its own task,
+  available in field mode too (re-point a deployed node without erasing NVS). `tools/provision_nvs.py`
+  drives it from `.env`; the AppKey is never echoed (the device runs linenoise in dumb mode → no
+  echo, and the tool redacts).
+
+**Smoke gate — all three conditions PASS (HIL, project board, factory/placeholder-creds image).**
+
+1. *Unprovisioned waits, no bogus join.* Empty `prov` + placeholder compiled key:
+   ```
+   W (871) app: === boot #10 — reset reason: USB (11) ===
+   I (1423) prov: provisioning console ready — prov-lorawan / prov-modbus / … ; nonces/session preserved
+   prov> W (1435) app: AWAITING PROVISIONING — no LoRaWAN credentials. Run tools/provision_nvs.py …
+   ```
+   No `OTAA:` / `join attempt` line.
+
+2. *NVS creds drive the join.* `tools/provision_nvs.py … --env env_rsfsjt` wrote
+   `dev=1 baud=4800 unit=1 intv=20` + creds (AppKey redacted), `prov-done` restarted; next boot:
+   ```
+   I (1479) lora: OTAA: DevEUI=3cdc75fffe6f85dc JoinEUI=0000000000000000 [creds:NVS]
+   I (1485) lora: session restored (no re-join); uplink DR3 (SF9)
+   I (1491) app: field app: REAL Modbus RS-FSJT, unit 1 @ 4800 8N1, 20s interval [cfg:NVS]
+   ```
+   The compiled key is the all-zero placeholder, so a successful `uplink OK` *can only* be using NVS
+   creds; `session restored` confirms nonces survived provisioning.
+
+3. *Config change without rebuild.* Re-running the tool in **field mode** with `env_mfm384`
+   (`dev=0 baud=9600 intv=60`) on the **same binary** → next boot:
+   ```
+   I (1493) app: field app: REAL Modbus MFM384, unit 1 @ 9600 8N1, 60s interval [cfg:NVS]
+   ```
+   Device/baud/interval all flipped (RS-FSJT/4800/20 → MFM384/9600/60) with no recompile.
+
+**Result: 7d GREEN.** Default (real-creds) image re-flashed to leave the bench clean; it logs
+`[creds:NVS]` because the NVS provisioning now takes priority over the compiled fallback — the
+intended provisioned state. RS-485 reads stale-flag on the bench (no meter attached) — orthogonal
+to 7d (read path proven Phase 6).
+
+**Lessons.**
+- *Provision additively.* A whole-NVS-image write (parttool/nvs_partition_gen) wipes the LoRaWAN
+  nonces → DevNonce regression → ChirpStack rejects the re-join. Writing only the `prov` namespace
+  via a console keeps `lorawan` intact. Worth the extra firmware over the simpler host-image route.
+- *Kconfig add needs `rm sdkconfig`.* A new `config` with `default y` did not regenerate into an
+  existing `sdkconfig` on an incremental build — the console silently compiled out (binary barely
+  grew; `strings`/`nm` showed no `prov-*`). Deleting `sdkconfig` (or `fullclean`) forced the regen.
+  Same class as the Phase-7a `SDKCONFIG_DEFAULTS` cache stale. Verify a new Kconfig option lands in
+  `sdkconfig` before trusting the build.
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

@@ -19,7 +19,51 @@
 #include "nvs_flash.h"
 
 static const char *TAG = "lora";
-#define LORA_NVS_NS "lorawan"
+#define LORA_NVS_NS "lorawan" /* nonces + session (survive provisioning) */
+#define PROV_NVS_NS "prov"    /* provisioned OTAA creds (7d) — priority over compiled */
+
+/* Provisioned credentials, lazily loaded from NVS once. If absent, the compiled
+ * lora_credentials.h values (real on a filled-in dev tree, all-zero placeholder otherwise) apply.
+ */
+static bool s_creds_loaded = false;
+static bool s_nvs_creds = false;
+static uint64_t s_deveui = 0;
+static uint64_t s_joineui = 0;
+static uint8_t s_appkey[16] = {0};
+
+static void load_prov_creds(void)
+{
+    if (s_creds_loaded) {
+        return;
+    }
+    s_creds_loaded = true;
+    nvs_handle_t h;
+    if (nvs_open(PROV_NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        uint64_t de = 0, je = 0;
+        size_t n = sizeof(s_appkey);
+        if (nvs_get_u64(h, "deveui", &de) == ESP_OK && nvs_get_u64(h, "joineui", &je) == ESP_OK &&
+            nvs_get_blob(h, "appkey", s_appkey, &n) == ESP_OK && n == sizeof(s_appkey)) {
+            s_deveui = de;
+            s_joineui = je;
+            s_nvs_creds = true;
+        }
+        nvs_close(h);
+    }
+}
+
+extern "C" bool lora_is_provisioned(void)
+{
+    load_prov_creds();
+    if (s_nvs_creds) {
+        return true;
+    }
+    for (size_t i = 0; i < sizeof(LORA_APPKEY); ++i) {
+        if (LORA_APPKEY[i]) {
+            return true; /* a real compiled key is acceptable */
+        }
+    }
+    return false;
+}
 
 /* SPI(SCK=5, MISO=3, MOSI=6); Module(NSS=7, DIO1=47, RST=8, BUSY=48) — ADR-001 (bench-confirmed).
  */
@@ -79,10 +123,13 @@ extern "C" esp_err_t lora_init(void)
 
 extern "C" esp_err_t lora_join(void)
 {
-    ESP_LOGI(TAG, "OTAA: DevEUI=%016llx JoinEUI=%016llx", (unsigned long long)LORA_DEVEUI,
-             (unsigned long long)LORA_JOINEUI);
-    int16_t st =
-        s_node.beginOTAA(LORA_JOINEUI, LORA_DEVEUI, (uint8_t *)LORA_APPKEY, (uint8_t *)LORA_APPKEY);
+    load_prov_creds();
+    const uint64_t deveui = s_nvs_creds ? s_deveui : (uint64_t)LORA_DEVEUI;
+    const uint64_t joineui = s_nvs_creds ? s_joineui : (uint64_t)LORA_JOINEUI;
+    uint8_t *appkey = s_nvs_creds ? s_appkey : (uint8_t *)LORA_APPKEY;
+    ESP_LOGI(TAG, "OTAA: DevEUI=%016llx JoinEUI=%016llx [creds:%s]", (unsigned long long)deveui,
+             (unsigned long long)joineui, s_nvs_creds ? "NVS" : "compiled");
+    int16_t st = s_node.beginOTAA(joineui, deveui, appkey, appkey);
     if (st != RADIOLIB_ERR_NONE) {
         ESP_LOGE(TAG, "beginOTAA failed (%d)", st);
         return ESP_FAIL;

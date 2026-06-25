@@ -50,3 +50,6 @@ firmware/main/lora_credentials.h
 
 # clangd / editor index cache
 .cache/
+
+# Presentation live-mode config (may hold an internal endpoint token) — never commit
+presentation/config.js

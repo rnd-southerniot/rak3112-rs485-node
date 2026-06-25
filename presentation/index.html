@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Careflow RS-485 SCOMM Node — Workflow Presentation</title>
+<!--
+  Self-contained, zero-dependency presentation for non-technical staff (ops / sales / marketing).
+  Walks the full product workflow: CRM project init (Careflow) → firmware → ChirpStack → live uplinks.
+  All numbers are REAL values captured by the rak3112-rs485-node project (see README.md).
+  Optional live mode: drop a presentation/config.js defining window.LIVE — absent => replay only.
+-->
+<style>
+  :root {
+    --bg:        #0a0e1a;
+    --bg2:       #0f1626;
+    --panel:     #141d33;
+    --panel2:    #1a2540;
+    --line:      #243352;
+    --ink:       #e8eefc;
+    --muted:     #8ea0c6;
+    --dim:       #5d6f96;
+    --teal:      #2dd4bf;
+    --teal-d:    #0d9488;
+    --blue:      #4f9cff;
+    --green:     #46d97f;
+    --amber:     #f5b942;
+    --red:       #ff6b6b;
+    --violet:    #a78bfa;
+    --shadow:    0 10px 40px rgba(0,0,0,.45);
+    --r:         14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(1200px 700px at 80% -10%, #16223f 0%, var(--bg) 55%), var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* ---------- top ribbon ---------- */
+  header.ribbon {
+    display: flex; align-items: center; gap: 18px;
+    padding: 14px 26px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(20,29,51,.9), rgba(10,14,26,.4));
+  }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 270px; }
+  .brand .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--teal);
+    box-shadow: 0 0 0 4px rgba(45,212,191,.18); animation: pulse 2.4s infinite; }
+  .brand b { font-size: 15px; letter-spacing: .2px; }
+  .brand span { display: block; font-size: 11.5px; color: var(--muted); font-weight: 500; }
+  @keyframes pulse { 0%,100%{ box-shadow:0 0 0 4px rgba(45,212,191,.18);} 50%{ box-shadow:0 0 0 9px rgba(45,212,191,0);} }
+
+  .pipeline { display: flex; align-items: center; gap: 6px; flex: 1; justify-content: center; }
+  .stage {
+    display: flex; align-items: center; gap: 10px; padding: 9px 16px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+    font-weight: 600; font-size: 13.5px; white-space: nowrap; transition: all .4s ease;
+  }
+  .stage .n { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--panel2); color: var(--dim); font-size: 12px; font-weight: 700; }
+  .stage.active { border-color: var(--teal); color: var(--ink); background: linear-gradient(180deg,#163243,#10243a);
+    box-shadow: 0 0 0 1px rgba(45,212,191,.3), 0 8px 24px rgba(45,212,191,.12); }
+  .stage.active .n { background: var(--teal); color: #04221d; }
+  .stage.done { color: var(--green); border-color: rgba(70,217,127,.4); }
+  .stage.done .n { background: rgba(70,217,127,.16); color: var(--green); }
+  .arr { color: var(--dim); font-size: 14px; }
+
+  .mode-pill { display:flex; align-items:center; gap:8px; min-width: 150px; justify-content:flex-end; }
+  .mode-pill .live-led { width:9px; height:9px; border-radius:50%; background:var(--dim); }
+  .mode-pill.is-live .live-led { background: var(--red); animation: pulse 1.2s infinite; }
+  .mode-pill small { color: var(--muted); font-weight:600; font-size:12px; }
+
+  /* ---------- scene area ---------- */
+  main { position: relative; flex: 1; overflow: hidden; }
+  .scene {
+    position: absolute; inset: 0; padding: 30px 44px;
+    opacity: 0; transform: translateY(14px); pointer-events: none;
+    transition: opacity .5s ease, transform .5s ease; overflow: auto;
+  }
+  .scene.show { opacity: 1; transform: none; pointer-events: auto; }
+  .scene-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 18px; }
+  .scene-head h1 { margin: 0; font-size: 27px; letter-spacing: -.3px; }
+  .scene-head .kicker { color: var(--teal); font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 1.4px; }
+  .scene-head p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  .grid { display: grid; gap: 22px; }
+  .card {
+    background: linear-gradient(180deg, var(--panel), var(--bg2));
+    border: 1px solid var(--line); border-radius: var(--r); padding: 20px 22px; box-shadow: var(--shadow);
+  }
+  .card h3 { margin: 0 0 4px; font-size: 16px; }
+  .card .sub { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+
+  /* ---------- scene 1: CRM stepper ---------- */
+  .crm-grid { grid-template-columns: 1.55fr 1fr; align-items: start; }
+  .stepper { list-style: none; margin: 0; padding: 0; }
+  .step { display: grid; grid-template-columns: 38px 1fr; gap: 14px; padding: 11px 0; position: relative; opacity: .4; transition: opacity .4s; }
+  .step:not(:last-child)::before { content:""; position:absolute; left:18px; top:40px; bottom:-2px; width:2px; background: var(--line); }
+  .step.run, .step.done { opacity: 1; }
+  .step .ic { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--panel2); border: 1px solid var(--line); font-weight: 700; color: var(--dim); transition: all .4s; }
+  .step.run .ic { border-color: var(--teal); color: var(--teal); box-shadow: 0 0 0 4px rgba(45,212,191,.14); }
+  .step.run .ic::after { content:""; position:absolute; width:38px; height:38px; border-radius:50%;
+    border:2px solid transparent; border-top-color: var(--teal); animation: spin .8s linear infinite; }
+  .step.done .ic { background: rgba(70,217,127,.16); border-color: rgba(70,217,127,.5); color: var(--green); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .step .t { font-weight: 650; font-size: 15px; }
+  .step .d { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .substates { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+  .substates span { font-size: 11px; padding: 4px 9px; border-radius: 6px; background: var(--panel2);
+    color: var(--dim); border: 1px solid var(--line); transition: all .35s; font-weight: 600; letter-spacing:.2px; }
+  .substates span.on { color: var(--green); border-color: rgba(70,217,127,.45); background: rgba(70,217,127,.1); }
+
+  .id-card .row { display: flex; justify-content: space-between; align-items: center; gap: 14px;
+    padding: 11px 0; border-bottom: 1px dashed var(--line); }
+  .id-card .row:last-child { border-bottom: 0; }
+  .id-card .k { color: var(--muted); font-size: 13px; }
+  .id-card .v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; color: var(--ink);
+    opacity: 0; transform: translateX(8px); transition: all .45s; text-align: right; }
+  .id-card .v.in { opacity: 1; transform: none; }
+  .id-card .v.secret { color: var(--amber); }
+  .id-card .v.demo::after { content:" demo"; color: var(--dim); font-size: 10px; font-family: inherit; }
+  .reg-banner { margin-top: 16px; padding: 13px 16px; border-radius: 10px; display: flex; align-items: center; gap: 10px;
+    background: rgba(70,217,127,.08); border: 1px solid rgba(70,217,127,.3); color: var(--green);
+    font-weight: 650; opacity: 0; transform: scale(.96); transition: all .5s; }
+  .reg-banner.in { opacity: 1; transform: none; }
+
+  /* form panel (scene 1 right column) */
+  .form-card { display: flex; flex-direction: column; min-height: 430px; }
+  .form-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .form-head h3 { margin: 0; }
+  .form-ctrls { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+  .fbtn { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel2);
+    color: var(--ink); font-size: 15px; font-weight: 700; cursor: pointer; transition: all .2s; line-height: 1; }
+  .fbtn:hover { border-color: var(--teal); color: var(--teal); }
+  .fbtn:active { transform: translateY(1px); }
+  .form-body { margin-top: 14px; flex: 1; }
+  .frow { display: flex; justify-content: space-between; gap: 14px; align-items: center; padding: 11px 0;
+    border-bottom: 1px dashed var(--line); opacity: 0; transform: translateY(5px); transition: all .35s; }
+  .frow.in { opacity: 1; transform: none; }
+  .frow .fl { color: var(--muted); font-size: 13.5px; }
+  .frow .fv { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; text-align: right; color: var(--ink); }
+  .frow .fv.secret { color: var(--amber); }
+  .frow .fv.ok { color: var(--green); }
+  .frow .fv.demo::after { content: " demo"; color: var(--dim); font-size: 10px; font-family: -apple-system, sans-serif; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 18px; margin: 2px 0 6px; }
+  .chk-item { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--muted);
+    opacity: 0; transform: translateY(5px); transition: all .3s; }
+  .chk-item.in { opacity: 1; transform: none; }
+  .chk-item i { width: 18px; height: 18px; border-radius: 5px; background: rgba(70,217,127,.16);
+    color: var(--green); display: grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 800; }
+
+  /* ---------- scene 2: firmware ---------- */
+  .flow { display: flex; align-items: stretch; gap: 0; margin: 6px 0 8px; }
+  .flow .node { flex: 1; text-align: center; padding: 16px 8px; border-radius: 12px; background: var(--panel2);
+    border: 1px solid var(--line); opacity: .35; transform: translateY(6px); transition: all .45s; }
+  .flow .node.in { opacity: 1; transform: none; border-color: var(--teal); }
+  .flow .node .ico { font-size: 26px; }
+  .flow .node .nm { font-weight: 700; font-size: 13.5px; margin-top: 6px; }
+  .flow .node .ds { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .flow .pipe { width: 42px; align-self: center; height: 2px; background: var(--line); position: relative; }
+  .flow .pipe.in { background: var(--teal); }
+  .flow .pipe.in::after { content:"›"; position:absolute; right:-4px; top:-12px; color: var(--teal); font-size: 20px; }
+
+  .comp-grid { grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 6px; }
+  .comp { padding: 13px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line);
+    opacity: .35; transform: translateY(6px); transition: all .4s; }
+  .comp.in { opacity: 1; transform: none; }
+  .comp b { font-family: ui-monospace, monospace; font-size: 13px; color: var(--teal); }
+  .comp p { margin: 5px 0 0; font-size: 12px; color: var(--muted); line-height: 1.35; }
+
+  .ci { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .ci .gate { padding: 8px 13px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--line);
+    font-size: 13px; font-weight: 600; color: var(--muted); opacity: .4; transition: all .4s; display:flex; gap:7px; align-items:center; }
+  .ci .gate.in { opacity: 1; color: var(--green); border-color: rgba(70,217,127,.4); }
+  .ci .gate .chk { color: var(--green); }
+  .ci .sep { color: var(--dim); }
+
+  .timeline { display: flex; gap: 6px; margin-top: 8px; }
+  .ms { flex: 1; text-align: center; }
+  .ms .bar { height: 8px; border-radius: 5px; background: var(--panel2); border: 1px solid var(--line); transition: all .4s; }
+  .ms.in .bar { background: linear-gradient(90deg, var(--teal-d), var(--teal)); border-color: var(--teal); }
+  .ms .lb { font-size: 11px; color: var(--muted); margin-top: 6px; font-weight: 600; }
+  .ms .dt { font-size: 10px; color: var(--dim); }
+
+  /* ---------- scene 3: chirpstack ---------- */
+  .cs-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .cs-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
+  .cs-table td { padding: 12px; border-bottom: 1px solid var(--line); font-family: ui-monospace, monospace; }
+  .cs-row { opacity: 0; transform: translateX(-8px); transition: all .5s; }
+  .cs-row.in { opacity: 1; transform: none; }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 6px; font-size: 11px; font-weight: 700; font-family: var(--font); }
+  .badge.ok { background: rgba(70,217,127,.14); color: var(--green); }
+  .badge.profile { background: rgba(79,156,255,.14); color: var(--blue); }
+
+  .join { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: center; margin: 18px 0 4px; }
+  .join .ep { text-align: center; padding: 20px; border-radius: 12px; background: var(--panel2); border: 1px solid var(--line); }
+  .join .ep .ico { font-size: 32px; }
+  .join .ep .nm { font-weight: 700; margin-top: 8px; }
+  .join .ep .ds { font-size: 12px; color: var(--muted); }
+  .join .wire { position: relative; height: 90px; }
+  .join .msg { position: absolute; left: 0; right: 0; text-align: center; font-size: 12px; font-weight: 700;
+    padding: 6px 10px; border-radius: 999px; opacity: 0; }
+  .join .msg.req { top: 8px; color: var(--amber); background: rgba(245,185,66,.12); border: 1px solid rgba(245,185,66,.35); }
+  .join .msg.acc { bottom: 8px; color: var(--green); background: rgba(70,217,127,.12); border: 1px solid rgba(70,217,127,.35); }
+  .join .msg.fly-r { animation: flyR 1.6s ease forwards; }
+  .join .msg.fly-a { animation: flyA 1.6s ease forwards; }
+  @keyframes flyR { 0%{opacity:0; transform:translateX(-60px);} 20%{opacity:1;} 80%{opacity:1;} 100%{opacity:1; transform:translateX(60px);} }
+  @keyframes flyA { 0%{opacity:0; transform:translateX(60px);} 20%{opacity:1;} 80%{opacity:1;} 100%{opacity:1; transform:translateX(-60px);} }
+  .joined { margin-top: 14px; text-align: center; font-weight: 750; font-size: 18px; color: var(--green);
+    opacity: 0; transform: scale(.9); transition: all .5s; }
+  .joined.in { opacity: 1; transform: none; }
+
+  /* ---------- scene 4: dashboard ---------- */
+  .dash-grid { grid-template-columns: 1fr 1fr 0.9fr; gap: 18px; }
+  .feed { max-height: 320px; overflow: hidden; }
+  .feed .u { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center;
+    padding: 9px 4px; border-bottom: 1px solid var(--line); font-size: 13px; animation: slideIn .4s ease; }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+  .feed .u .fc { font-family: ui-monospace, monospace; color: var(--dim); font-size: 12px; }
+  .feed .u .dv { font-weight: 650; }
+  .feed .u .dv .tag { font-size: 10px; color: var(--violet); }
+  .feed .u .rs { font-family: ui-monospace, monospace; color: var(--muted); font-size: 12px; text-align: right; }
+
+  .gauge-wrap { display: flex; flex-direction: column; align-items: center; }
+  canvas { display: block; }
+  .big { font-size: 34px; font-weight: 750; letter-spacing: -.5px; }
+  .big small { font-size: 16px; color: var(--muted); font-weight: 600; }
+
+  .hexline { font-family: ui-monospace, monospace; font-size: 14px; letter-spacing: 1px; margin: 8px 0 2px; word-break: break-all; }
+  .hexline b { color: var(--teal); }
+  .hexline .hdr { color: var(--amber); }
+  .decoded { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 8px; line-height: 1.55; }
+  .decoded .ky { color: var(--blue); }
+  .decoded .vl { color: var(--ink); }
+
+  .vbars { display: grid; gap: 9px; margin: 4px 0; }
+  .vbar { display: grid; grid-template-columns: 42px 1fr 70px; align-items: center; gap: 10px; }
+  .vbar .nm { font-size: 12px; color: var(--muted); }
+  .vbar .track { height: 12px; border-radius: 6px; background: var(--panel2); overflow: hidden; }
+  .vbar .fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--teal-d), var(--teal)); transition: width .6s ease; }
+  .vbar .val { font-family: ui-monospace, monospace; font-size: 13px; text-align: right; }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .metric { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .metric .ml { font-size: 11px; color: var(--muted); }
+  .metric .mv { font-size: 19px; font-weight: 700; font-family: ui-monospace, monospace; }
+  .sim-badge { display: inline-block; padding: 3px 9px; border-radius: 6px; font-size: 10.5px; font-weight: 800;
+    background: rgba(167,139,250,.15); color: var(--violet); border: 1px solid rgba(167,139,250,.4); letter-spacing: .5px; }
+  .real-badge { background: rgba(70,217,127,.14); color: var(--green); border-color: rgba(70,217,127,.4); }
+
+  .link-rows .lr { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .link-rows .lr .lk { color: var(--muted); font-size: 13px; }
+  .link-rows .lr .lv { font-family: ui-monospace, monospace; font-weight: 650; font-size: 14px; }
+  .sig-good { color: var(--green); }
+
+  /* ---------- bottom controls ---------- */
+  footer.controls {
+    display: flex; align-items: center; gap: 16px; padding: 12px 26px;
+    border-top: 1px solid var(--line); background: linear-gradient(0deg, rgba(20,29,51,.9), rgba(10,14,26,.3));
+  }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: all .2s; }
+  .btn:hover { border-color: var(--teal); background: var(--panel2); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: var(--teal-d); border-color: var(--teal); color: #04221d; }
+  .dots { display: flex; gap: 10px; flex: 1; justify-content: center; }
+  .dots .d { display: flex; align-items: center; gap: 8px; cursor: pointer; opacity: .55; transition: opacity .3s; }
+  .dots .d:hover { opacity: 1; }
+  .dots .d.on { opacity: 1; }
+  .dots .d i { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); transition: all .3s; font-style: normal; }
+  .dots .d.on i { background: var(--teal); box-shadow: 0 0 0 4px rgba(45,212,191,.15); }
+  .dots .d span { font-size: 13px; color: var(--muted); font-weight: 600; }
+  .dots .d.on span { color: var(--ink); }
+  .toggle { display: flex; align-items: center; gap: 9px; cursor: pointer; user-select: none; }
+  .toggle .sw { width: 44px; height: 24px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--line); position: relative; transition: all .3s; }
+  .toggle .sw::after { content:""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--dim); transition: all .3s; }
+  .toggle.on .sw { background: rgba(255,107,107,.2); border-color: var(--red); }
+  .toggle.on .sw::after { left: 22px; background: var(--red); }
+  .toggle small { font-size: 13px; color: var(--muted); font-weight: 600; }
+
+  .banner { position: fixed; top: 74px; left: 50%; transform: translateX(-50%) translateY(-12px); z-index: 50;
+    padding: 11px 18px; border-radius: 10px; background: var(--panel); border: 1px solid var(--amber);
+    color: var(--amber); font-size: 13.5px; font-weight: 600; box-shadow: var(--shadow); opacity: 0; pointer-events: none;
+    transition: all .35s; }
+  .banner.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .progress { position: absolute; top: 0; left: 0; height: 3px; background: var(--teal); width: 0; transition: width .25s linear; z-index: 5; }
+  .auto-off .progress { opacity: 0; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============ TOP RIBBON ============ -->
+  <header class="ribbon">
+    <div class="brand">
+      <span class="dot"></span>
+      <div><b>Careflow · RS-485 ⇄ SCOMM Node</b><span>Southern IoT — industrial sensor telemetry</span></div>
+    </div>
+    <nav class="pipeline" id="pipeline">
+      <div class="stage" data-s="0"><span class="n">1</span> CRM Project</div>
+      <span class="arr">→</span>
+      <div class="stage" data-s="1"><span class="n">2</span> Firmware</div>
+      <span class="arr">→</span>
+      <div class="stage" data-s="2"><span class="n">3</span> ChirpStack</div>
+      <span class="arr">→</span>
+      <div class="stage" data-s="3"><span class="n">4</span> Live Uplinks</div>
+    </nav>
+    <div class="mode-pill" id="modePill"><span class="live-led"></span><small>REPLAY</small></div>
+  </header>
+
+  <!-- ============ SCENES ============ -->
+  <main>
+    <div class="progress" id="progress"></div>
+
+    <!-- ---------- SCENE 1: CRM ---------- -->
+    <section class="scene" data-scene="0">
+      <div class="scene-head">
+        <div>
+          <div class="kicker">Step 1 · System of Record</div>
+          <h1>Onboard the customer &amp; provision the node — in the CRM</h1>
+          <p>Customer <b>Careflow</b> is onboarded and a node provisioned — registered on the SCOMM network through one CRM workflow, no manual cloud setup.</p>
+        </div>
+      </div>
+      <div class="grid crm-grid">
+        <div class="card">
+          <h3>SCOMM CRM — guided onboarding workflow</h3>
+          <div class="sub">Nine automated steps in the system of record. The same flow runs for every node shipped.</div>
+          <ul class="stepper" id="stepper"></ul>
+        </div>
+        <div class="card form-card">
+          <div class="form-head">
+            <div>
+              <h3 id="formTitle">Sign in to SCOMM CRM</h3>
+              <div class="sub" id="formStep">Section 1 of 9</div>
+            </div>
+            <div class="form-ctrls">
+              <button class="fbtn" id="crmPrev" title="Previous section">‹</button>
+              <button class="fbtn" id="crmPlay" title="Pause / resume walkthrough">⏸</button>
+              <button class="fbtn" id="crmNext" title="Next section">›</button>
+            </div>
+          </div>
+          <div class="form-body" id="formBody"></div>
+          <div class="reg-banner" id="regBanner">✓ SCOMM registration COMPLETED · node live</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- SCENE 2: FIRMWARE ---------- -->
+    <section class="scene" data-scene="1">
+      <div class="scene-head">
+        <div>
+          <div class="kicker">Step 2 · The Product</div>
+          <h1>What the firmware does — and how we prove it works</h1>
+          <p>The node reads industrial sensors over an RS-485 cable and reports them wirelessly, over kilometres, on low power.</p>
+        </div>
+      </div>
+      <div class="grid" style="grid-template-columns:1fr;">
+        <div class="card">
+          <h3>How the data travels</h3>
+          <div class="flow" id="flow">
+            <div class="node" data-f="0"><div class="ico">🏭</div><div class="nm">Sensor</div><div class="ds">Meter / wind sensor</div></div>
+            <div class="pipe" data-p="0"></div>
+            <div class="node" data-f="1"><div class="ico">🔌</div><div class="nm">RS-485</div><div class="ds">Rugged field bus</div></div>
+            <div class="pipe" data-p="1"></div>
+            <div class="node" data-f="2"><div class="ico">🧠</div><div class="nm">Careflow</div><div class="ds">ESP32-S3 brain</div></div>
+            <div class="pipe" data-p="2"></div>
+            <div class="node" data-f="3"><div class="ico">📡</div><div class="nm">SCOMM radio</div><div class="ds">Long-range, low-power</div></div>
+            <div class="pipe" data-p="3"></div>
+            <div class="node" data-f="4"><div class="ico">☁️</div><div class="nm">ChirpStack</div><div class="ds">Network server</div></div>
+          </div>
+        </div>
+        <div class="grid" style="grid-template-columns:1.4fr 1fr; gap:22px;">
+          <div class="card">
+            <h3>Inside the firmware</h3>
+            <div class="sub">Small, tested building blocks — each does one job.</div>
+            <div class="grid comp-grid" id="comps">
+              <div class="comp" data-c="0"><b>rs485</b><p>Talks on the two-wire bus, switches direction</p></div>
+              <div class="comp" data-c="1"><b>modbus</b><p>Speaks the industrial sensor language</p></div>
+              <div class="comp" data-c="2"><b>meter</b><p>Knows each sensor's data map</p></div>
+              <div class="comp" data-c="3"><b>payload</b><p>Packs readings into tiny radio messages</p></div>
+              <div class="comp" data-c="4"><b>scomm</b><p>Joins the network &amp; sends uplinks</p></div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Quality gates — every change</h3>
+            <div class="sub">Nothing ships unless all checks pass automatically.</div>
+            <div class="ci" id="ci">
+              <span class="gate" data-g="0"><span class="chk">✓</span> Secrets scan</span>
+              <span class="gate" data-g="1"><span class="chk">✓</span> Format / lint</span>
+              <span class="gate" data-g="2"><span class="chk">✓</span> Build</span>
+              <span class="gate" data-g="3"><span class="chk">✓</span> Tests</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Delivered in phases — each one independently verified</h3>
+          <div class="sub">Six gates passed, May → June 2026. Every gate had a pass/fail bench test.</div>
+          <div class="timeline" id="timeline">
+            <div class="ms" data-m="0"><div class="bar"></div><div class="lb">Discovery</div><div class="dt">May 1</div></div>
+            <div class="ms" data-m="1"><div class="bar"></div><div class="lb">Scaffold</div><div class="dt">May 1</div></div>
+            <div class="ms" data-m="2"><div class="bar"></div><div class="lb">Pin map</div><div class="dt">May 2</div></div>
+            <div class="ms" data-m="3"><div class="bar"></div><div class="lb">First flash</div><div class="dt">Jun 20</div></div>
+            <div class="ms" data-m="4"><div class="bar"></div><div class="lb">RS-485</div><div class="dt">Jun 20</div></div>
+            <div class="ms" data-m="5"><div class="bar"></div><div class="lb">SCOMM join</div><div class="dt">Jun 22</div></div>
+            <div class="ms" data-m="6"><div class="bar"></div><div class="lb">Telemetry</div><div class="dt">Jun 24</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- SCENE 3: CHIRPSTACK ---------- -->
+    <section class="scene" data-scene="2">
+      <div class="scene-head">
+        <div>
+          <div class="kicker">Step 3 · Network Server</div>
+          <h1>The node joins the SCOMM network</h1>
+          <p>The CRM handed the node to ChirpStack. Now it powers on and securely joins over the air (OTAA).</p>
+        </div>
+      </div>
+      <div class="grid" style="grid-template-columns:1fr;">
+        <div class="card">
+          <h3>Registered in ChirpStack</h3>
+          <div class="sub">The device record the CRM created — ready to receive data.</div>
+          <table class="cs-table">
+            <thead><tr><th>Device</th><th>DevEUI</th><th>Application</th><th>Profile / Codec</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr class="cs-row" id="csRow">
+                <td>Careflow-RS485-0A1B2C</td>
+                <td>ac1f09fffe0a1b2c</td>
+                <td>careflow-rs485</td>
+                <td><span class="badge profile">AS923 · payload codec</span></td>
+                <td><span class="badge ok">● enabled</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h3>Over-the-air join — 923.4 MHz (AS923-1)</h3>
+          <div class="join">
+            <div class="ep"><div class="ico">🧠</div><div class="nm">Careflow node</div><div class="ds">on the bench</div></div>
+            <div class="wire">
+              <div class="msg req" id="msgReq">Join-Request →</div>
+              <div class="msg acc" id="msgAcc">← Join-Accept</div>
+            </div>
+            <div class="ep"><div class="ico">☁️</div><div class="nm">ChirpStack</div><div class="ds">10.10.8.140</div></div>
+          </div>
+          <div class="joined" id="joined">✓ Joined — device is on the network</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- SCENE 4: DASHBOARD ---------- -->
+    <section class="scene" data-scene="3">
+      <div class="scene-head">
+        <div>
+          <div class="kicker">Step 4 · Operations</div>
+          <h1>Live telemetry, decoded</h1>
+          <p>Real readings arrive every cycle. The network server turns tiny radio packets back into plain numbers.</p>
+        </div>
+      </div>
+      <div class="grid dash-grid">
+        <!-- wind -->
+        <div class="card">
+          <h3>Wind sensor <span class="sim-badge real-badge" id="windFlag">REAL</span></h3>
+          <div class="sub">RS-FSJT-N01 · uplink <span id="windFc">#434</span></div>
+          <div class="gauge-wrap">
+            <canvas id="windGauge" width="240" height="150"></canvas>
+            <div class="big"><span id="windVal">0.40</span> <small>m/s</small></div>
+          </div>
+          <div class="hexline"><span class="hdr" id="windHdr">010200</span><b id="windBody">0028</b></div>
+          <div class="decoded" id="windDecoded"></div>
+        </div>
+        <!-- meter -->
+        <div class="card">
+          <h3>Power meter <span class="sim-badge" id="meterFlag">SIMULATED</span></h3>
+          <div class="sub">SELEC MFM384 · uplink <span id="meterFc">#440</span></div>
+          <div class="vbars" id="vbars">
+            <div class="vbar"><span class="nm">V1N</span><div class="track"><div class="fill" data-v="0"></div></div><span class="val" data-vv="0">230.6 V</span></div>
+            <div class="vbar"><span class="nm">V2N</span><div class="track"><div class="fill" data-v="1"></div></div><span class="val" data-vv="1">232.2 V</span></div>
+            <div class="vbar"><span class="nm">V3N</span><div class="track"><div class="fill" data-v="2"></div></div><span class="val" data-vv="2">227.2 V</span></div>
+          </div>
+          <div class="metrics">
+            <div class="metric"><div class="ml">Total power</div><div class="mv" id="mPower">5.1<small> kW</small></div></div>
+            <div class="metric"><div class="ml">Energy</div><div class="mv" id="mEnergy">1000.25<small> kWh</small></div></div>
+            <div class="metric"><div class="ml">Frequency</div><div class="mv" id="mFreq">50.01<small> Hz</small></div></div>
+            <div class="metric"><div class="ml">Power factor</div><div class="mv" id="mPf">0.95</div></div>
+          </div>
+        </div>
+        <!-- link + feed -->
+        <div>
+          <div class="card" style="margin-bottom:18px;">
+            <h3>Radio link quality</h3>
+            <canvas id="rssiSpark" width="300" height="64" style="margin:6px 0 10px;"></canvas>
+            <div class="link-rows">
+              <div class="lr"><span class="lk">Signal (RSSI)</span><span class="lv sig-good" id="lRssi">−48 dBm</span></div>
+              <div class="lr"><span class="lk">Clarity (SNR)</span><span class="lv sig-good" id="lSnr">+12.2 dB</span></div>
+              <div class="lr"><span class="lk">Data rate</span><span class="lv">DR3 · SF9/BW125</span></div>
+              <div class="lr"><span class="lk">Gateway</span><span class="lv">ac1f09…340d</span></div>
+            </div>
+          </div>
+          <div class="card feed">
+            <h3>Uplink feed</h3>
+            <div id="feed"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ CONTROLS ============ -->
+  <footer class="controls">
+    <button class="btn" id="prevBtn">‹ Prev</button>
+    <button class="btn primary" id="playBtn">⏸ Pause</button>
+    <div class="dots" id="dots">
+      <div class="d" data-d="0"><i></i><span>CRM</span></div>
+      <div class="d" data-d="1"><i></i><span>Firmware</span></div>
+      <div class="d" data-d="2"><i></i><span>ChirpStack</span></div>
+      <div class="d" data-d="3"><i></i><span>Uplinks</span></div>
+    </div>
+    <div class="toggle" id="liveToggle" title="Best-effort: needs internal network + presentation/config.js">
+      <small>Replay</small><div class="sw"></div><small>Live</small>
+    </div>
+    <button class="btn" id="nextBtn">Next ›</button>
+  </footer>
+</div>
+
+<div class="banner" id="banner"></div>
+
+<script>
+/* ============================================================================
+   rak3112-rs485-node — presentation engine (vanilla JS, no dependencies)
+   Data below is REAL telemetry captured by the project. DevEUI is a labeled
+   demo value; AppKey is never shown. See README.md for provenance.
+   ============================================================================ */
+"use strict";
+
+/* ---- real captured baseline values (ground truth) ---- */
+const BASE = {
+  wind:  { mps: 0.40, fc: 434 },                                   // payload 0102000028
+  meter: { v: [230.6, 232.2, 227.2], kw: 5.1, kwh: 1000.25,        // payload 010101…
+           hz: 50.01, pf: 0.95, fc: 440 },
+  link:  { rssi: -48, snr: 12.2 }
+};
+
+/* ---- payload codec mirrors firmware/components/payload + chirpstack decoder ---- */
+function u16be(n){ n = Math.round(n) & 0xffff; return [(n>>8)&0xff, n&0xff]; }
+function u32be(n){ n = Math.round(n)>>>0; return [(n>>>24)&0xff,(n>>>16)&0xff,(n>>>8)&0xff,n&0xff]; }
+function hex(arr){ return arr.map(b => b.toString(16).padStart(2,"0")).join(""); }
+
+function encodeWind(mps, simulated){
+  const flags = simulated ? 0x01 : 0x00;
+  return [0x01, 0x02, flags].concat(u16be(mps*100));
+}
+function encodeMeter(m, simulated){
+  const flags = simulated ? 0x01 : 0x00;
+  return [0x01, 0x01, flags]
+    .concat(u16be(m.v[0]*10), u16be(m.v[1]*10), u16be(m.v[2]*10),
+            u16be(Math.round(m.kw*10)), u32be(m.kwh*100), u16be(m.hz*100), u16be(m.pf*1000));
+}
+
+/* ============================ scene controller ============================ */
+const scenes = Array.from(document.querySelectorAll(".scene"));
+const stages = Array.from(document.querySelectorAll(".stage"));
+const dots   = Array.from(document.querySelectorAll(".dots .d"));
+const progressEl = document.getElementById("progress");
+const SCENE_MS = [16000, 15000, 11000, 26000];   // CRM weighted longest
+let cur = -1, autoplay = true, sceneTimer = null, progTimer = null, sceneAbort = [];
+
+function clearScene(){
+  sceneAbort.forEach(id => clearTimeout(id));
+  sceneAbort = [];
+  if (sceneTimer) clearTimeout(sceneTimer);
+  if (progTimer) clearInterval(progTimer);
+}
+function later(fn, ms){ const id = setTimeout(fn, ms); sceneAbort.push(id); return id; }
+
+function go(n){
+  n = (n + scenes.length) % scenes.length;
+  if (n === cur) return;
+  clearScene();
+  cur = n;
+  scenes.forEach((s,i) => s.classList.toggle("show", i === n));
+  dots.forEach((d,i) => d.classList.toggle("on", i === n));
+  stages.forEach((s,i) => {
+    s.classList.toggle("active", i === n);
+    s.classList.toggle("done", i < n);
+    s.querySelector(".n").textContent = i < n ? "✓" : (i+1);
+  });
+  runScene(n);
+  startProgress();
+}
+function next(){ go(cur+1); }
+function prev(){ go(cur-1); }
+
+function startProgress(){
+  if (cur === 0) return;   // scene 1: the CRM form engine drives progress + advance
+  progressEl.style.width = "0";
+  if (!autoplay){ progressEl.style.opacity = 0; return; }
+  progressEl.style.opacity = 1;
+  const dur = SCENE_MS[cur]; const t0 = Date.now();
+  progTimer = setInterval(() => {
+    const p = Math.min(1, (Date.now()-t0)/dur);
+    progressEl.style.width = (p*100) + "%";
+  }, 80);
+  sceneTimer = setTimeout(next, dur);
+}
+
+/* ============================ scene 1: CRM ============================ */
+// Each section mirrors a step in tools/provision_node.py; the form shows the MINIMUM
+// details submitted at that step. DevEUI is a labeled demo value; AppKey is never shown.
+const SECTIONS = [
+  { title: "Sign in to SCOMM CRM", fields: [
+      ["Email", "ops@careflow.io"],
+      ["Password", "••••••••", "secret"],
+      ["Signed in as", "Careflow technician", "ok"] ] },
+  { title: "Product catalogue", fields: [
+      ["Product", "Careflow RS-485 SCOMM Node"],
+      ["Code", "CAREFLOW-RS485-AS923"],
+      ["Region", "AS923 · Bangladesh"] ] },
+  { title: "SOP template", fields: [
+      ["Procedure", "Bench bring-up"],
+      ["Version", "1"],
+      ["Status", "attached", "ok"] ] },
+  { title: "Hardware catalogue", fields: [
+      ["Catalogue entry", "Careflow RS-485 module"],
+      ["Quantity", "1"],
+      ["Mapped", "yes", "ok"] ] },
+  { title: "Onboarding task — client Careflow", fields: [
+      ["Client", "Careflow"],
+      ["Contact", "Arif"],
+      ["Email", "ops@careflow.io"],
+      ["Site", "Dhaka, Bangladesh"] ] },
+  { title: "Readiness states",
+    states: ["SCHEDULED_VISIT", "REQUIREMENTS_COMPLETE", "HARDWARE_PROCUREMENT_COMPLETE", "HARDWARE_PREPARED_COMPLETE"],
+    fields: [
+      ["Serial", "Careflow-RS485-0A1B2C"],
+      ["DevEUI", "ac1f09fffe0a1b2c", "demo"],
+      ["AppKey", "•••• •••• (32 hex — vaulted)", "secret"],
+      ["Firmware", "phase-6"] ] },
+  { title: "Pre-installation checklist",
+    checks: ["Devices tested", "Firmware loaded", "Credentials ready", "Network config",
+             "Access arranged", "Contact available", "Install guide", "QR codes printed", "Date confirmed"] },
+  { title: "Ready for installation", fields: [
+      ["Transition", "READY_FOR_INSTALLATION", "ok"],
+      ["Triggers", "SCOMM device registration", "ok"],
+      ["Mode", "automatic · async", "ok"] ] },
+  { title: "Verify registration", fields: [
+      ["CRM status", "COMPLETED", "ok"],
+      ["SCOMM device", "found ✓", "ok"],
+      ["Serial", "Careflow-RS485-0A1B2C"] ] }
+];
+const CRM_DWELL = 1700;     // pause on each filled section before auto-advancing
+let crm = { step: -1 };
+let crmTimer = null;
+
+function buildStepper(){
+  const ul = document.getElementById("stepper");
+  ul.innerHTML = SECTIONS.map((s,i) =>
+    `<li class="step" data-k="${i}"><div class="ic">${i+1}</div><div class="t">${s.title}</div></li>`).join("");
+  ul.querySelectorAll(".step").forEach(li =>
+    li.onclick = () => { pauseAuto(); crmGo(+li.dataset.k, false); });
+}
+
+// Render one section's form; reveal fields one-by-one if animate. Returns reveal duration (ms).
+function renderForm(sec, animate){
+  const body = document.getElementById("formBody");
+  let html = "";
+  if (sec.states) html += '<div class="substates">' + sec.states.map(s => `<span>${s.replaceAll("_"," ")}</span>`).join("") + '</div>';
+  if (sec.checks) html += '<div class="checks">' + sec.checks.map(c => `<div class="chk-item"><i>✓</i>${c}</div>`).join("") + '</div>';
+  if (sec.fields) html += sec.fields.map(f => `<div class="frow"><span class="fl">${f[0]}</span><span class="fv ${f[2]||""}">${f[1]}</span></div>`).join("");
+  body.innerHTML = html;
+  const sitems = Array.from(body.querySelectorAll(".substates span"));
+  const fitems = Array.from(body.querySelectorAll(".frow, .chk-item"));
+  let k = 0;
+  if (animate){
+    sitems.forEach(el => later(() => el.classList.add("on"), 150 * k++ + 120));
+    fitems.forEach(el => later(() => el.classList.add("in"), 150 * k++ + 120));
+  } else {
+    sitems.forEach(el => el.classList.add("on"));
+    fitems.forEach(el => el.classList.add("in"));
+  }
+  return 150 * k + 120;
+}
+
+function crmGo(i, animate){
+  i = Math.max(0, Math.min(SECTIONS.length - 1, i));
+  crm.step = i;
+  document.querySelectorAll("#stepper .step").forEach((st,j) => {
+    st.classList.toggle("run", j === i);
+    st.classList.toggle("done", j < i);
+    st.querySelector(".ic").innerHTML = j < i ? "✓" : (j + 1);
+  });
+  document.getElementById("formTitle").textContent = SECTIONS[i].title;
+  document.getElementById("formStep").textContent = "Section " + (i + 1) + " of " + SECTIONS.length;
+  const revealMs = renderForm(SECTIONS[i], animate);
+  document.getElementById("regBanner").classList.toggle("in", i === SECTIONS.length - 1);
+  progressEl.style.opacity = 1;
+  progressEl.style.width = ((i + 1) / SECTIONS.length * 100) + "%";
+  if (crmTimer) clearTimeout(crmTimer);
+  if (autoplay){
+    const dwell = (animate ? revealMs : 0) + CRM_DWELL;
+    crmTimer = setTimeout(() => {
+      if (i < SECTIONS.length - 1) crmGo(i + 1, true);
+      else later(next, 1300);
+    }, dwell);
+    sceneAbort.push(crmTimer);
+  }
+}
+function runCRM(){ buildStepper(); crm.step = -1; crmGo(0, true); }
+
+/* ============================ scene 2: firmware ============================ */
+function runFirmware(){
+  const nodes = Array.from(document.querySelectorAll("#flow .node"));
+  const pipes = Array.from(document.querySelectorAll("#flow .pipe"));
+  const comps = Array.from(document.querySelectorAll("#comps .comp"));
+  const gates = Array.from(document.querySelectorAll("#ci .gate"));
+  const ms    = Array.from(document.querySelectorAll("#timeline .ms"));
+  [...nodes,...pipes,...comps,...gates,...ms].forEach(e => e.classList.remove("in"));
+  let t = 200;
+  nodes.forEach((n,i) => { later(()=>n.classList.add("in"), t); if (pipes[i]) later(()=>pipes[i].classList.add("in"), t+260); t += 420; });
+  t += 200;
+  comps.forEach((c,i) => later(()=>c.classList.add("in"), t + i*260));
+  t += comps.length*260 + 200;
+  gates.forEach((g,i) => later(()=>g.classList.add("in"), t + i*260));
+  t += gates.length*260 + 200;
+  ms.forEach((m,i) => later(()=>m.classList.add("in"), t + i*200));
+}
+
+/* ============================ scene 3: chirpstack ============================ */
+function runChirp(){
+  const row = document.getElementById("csRow");
+  const req = document.getElementById("msgReq");
+  const acc = document.getElementById("msgAcc");
+  const joined = document.getElementById("joined");
+  row.classList.remove("in"); joined.classList.remove("in");
+  req.className = "msg req"; acc.className = "msg acc";
+  later(()=>row.classList.add("in"), 400);
+  later(()=>{ req.classList.add("fly-r"); }, 1600);
+  later(()=>{ acc.classList.add("fly-a"); }, 3500);
+  later(()=>joined.classList.add("in"), 5400);
+}
+
+/* ============================ scene 4: dashboard ============================ */
+let dash = null;
+function runDash(){
+  // state seeded from real baseline
+  dash = {
+    wind:  Object.assign({}, BASE.wind),
+    meter: { v: BASE.meter.v.slice(), kw: BASE.meter.kw, kwh: BASE.meter.kwh, hz: BASE.meter.hz, pf: BASE.meter.pf, fc: BASE.meter.fc },
+    rssiHist: Array.from({length: 40}, () => BASE.link.rssi + (Math.random()*4-2)),
+    feed: []
+  };
+  renderWind(true);
+  renderMeter(true);
+  drawSpark();
+  // seed feed with the two real captured frames
+  pushFeed({ dev:"RS-FSJT", real:true,  fc:BASE.wind.fc,  rssi:BASE.link.rssi });
+  pushFeed({ dev:"MFM384",  real:false, fc:BASE.meter.fc, rssi:BASE.link.rssi-3 });
+  scheduleTick();
+}
+
+let tickTimer = null;
+function scheduleTick(){
+  if (tickTimer) clearTimeout(tickTimer);
+  // live mode is handled separately; replay generates frames locally
+  tickTimer = setTimeout(() => { if (cur===3 && !liveMode) replayTick(); scheduleTick(); }, 3200);
+  sceneAbort.push(tickTimer);
+}
+
+function jit(x, d){ return x + (Math.random()*2-1)*d; }
+function replayTick(){
+  const windTurn = Math.random() < 0.5;
+  if (windTurn){
+    dash.wind.fc += 1;
+    dash.wind.mps = Math.max(0, jit(BASE.wind.mps, 0.25));
+    renderWind(true);
+    const rssi = Math.round(jit(BASE.link.rssi, 3));
+    pushFrame(rssi);
+    pushFeed({ dev:"RS-FSJT", real:true, fc:dash.wind.fc, rssi });
+  } else {
+    dash.meter.fc += 1;
+    dash.meter.v = BASE.meter.v.map(v => jit(v, 1.2));
+    dash.meter.kw = Math.max(0, jit(BASE.meter.kw, 0.6));
+    dash.meter.kwh += dash.meter.kw * (3.2/3600);   // energy accumulates with power
+    dash.meter.hz = jit(BASE.meter.hz, 0.03);
+    dash.meter.pf = Math.min(1, jit(BASE.meter.pf, 0.02));
+    renderMeter(true);
+    const rssi = Math.round(jit(BASE.link.rssi-3, 3));
+    pushFrame(rssi);
+    pushFeed({ dev:"MFM384", real:false, fc:dash.meter.fc, rssi });
+  }
+}
+function pushFrame(rssi){
+  dash.rssiHist.push(rssi); if (dash.rssiHist.length > 40) dash.rssiHist.shift();
+  document.getElementById("lRssi").textContent = rssi + " dBm";
+  drawSpark();
+}
+
+function renderWind(animate){
+  const w = dash.wind;
+  document.getElementById("windFc").textContent = "#" + w.fc;
+  document.getElementById("windVal").textContent = w.mps.toFixed(2);
+  const bytes = encodeWind(w.mps, false);
+  document.getElementById("windHdr").textContent = hex(bytes.slice(0,3));
+  document.getElementById("windBody").textContent = hex(bytes.slice(3));
+  document.getElementById("windDecoded").innerHTML =
+    `<span class="ky">device</span>: <span class="vl">RS-FSJT-N01</span>  ·  ` +
+    `<span class="ky">simulated</span>: <span class="vl">false</span><br>` +
+    `<span class="ky">wind_mps</span>: <span class="vl">${w.mps.toFixed(2)}</span>`;
+  drawGauge(document.getElementById("windGauge"), w.mps, 0, 12);
+}
+function renderMeter(){
+  const m = dash.meter;
+  document.getElementById("meterFc").textContent = "#" + m.fc;
+  const fills = document.querySelectorAll('#vbars .fill');
+  const vals  = document.querySelectorAll('#vbars .val');
+  m.v.forEach((v,i) => {
+    fills[i].style.width = Math.max(0, Math.min(100, (v/250)*100)) + "%";
+    vals[i].textContent = v.toFixed(1) + " V";
+  });
+  document.getElementById("mPower").innerHTML  = m.kw.toFixed(1) + '<small> kW</small>';
+  document.getElementById("mEnergy").innerHTML = m.kwh.toFixed(2) + '<small> kWh</small>';
+  document.getElementById("mFreq").innerHTML   = m.hz.toFixed(2) + '<small> Hz</small>';
+  document.getElementById("mPf").textContent   = m.pf.toFixed(2);
+}
+
+function pushFeed(f){
+  dash.feed.unshift(f); if (dash.feed.length > 9) dash.feed.pop();
+  const host = document.getElementById("feed");
+  host.innerHTML = dash.feed.map(x =>
+    `<div class="u"><span class="fc">#${x.fc}</span>` +
+    `<span class="dv">${x.dev} <span class="tag">${x.real ? "" : "· sim"}</span></span>` +
+    `<span class="rs">${x.rssi} dBm</span></div>`).join("");
+}
+
+/* ---- canvas: semicircular gauge ---- */
+function drawGauge(cv, val, min, max){
+  const ctx = cv.getContext("2d"); const W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+  const cx = W/2, cy = H-12, r = 96;
+  const a0 = Math.PI, a1 = 0;
+  // track
+  ctx.lineWidth = 14; ctx.lineCap = "round";
+  ctx.strokeStyle = "#1a2540";
+  ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1); ctx.stroke();
+  // value
+  const frac = Math.max(0, Math.min(1, (val-min)/(max-min)));
+  const grad = ctx.createLinearGradient(cx-r, 0, cx+r, 0);
+  grad.addColorStop(0, "#0d9488"); grad.addColorStop(1, "#2dd4bf");
+  ctx.strokeStyle = grad;
+  ctx.beginPath(); ctx.arc(cx, cy, r, a0, a0 + (a1-a0)*frac); ctx.stroke();
+  // needle dot
+  const ang = a0 + (a1-a0)*frac;
+  ctx.fillStyle = "#2dd4bf";
+  ctx.beginPath(); ctx.arc(cx + r*Math.cos(ang), cy + r*Math.sin(ang), 7, 0, 2*Math.PI); ctx.fill();
+}
+
+/* ---- canvas: rssi sparkline ---- */
+function drawSpark(){
+  const cv = document.getElementById("rssiSpark");
+  const ctx = cv.getContext("2d"); const W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+  const data = dash.rssiHist; const lo = -95, hi = -30;
+  const x = i => (i/(data.length-1))*W;
+  const y = v => H - ((v-lo)/(hi-lo))*(H-8) - 4;
+  // area
+  ctx.beginPath(); ctx.moveTo(0, H);
+  data.forEach((v,i) => ctx.lineTo(x(i), y(v)));
+  ctx.lineTo(W, H); ctx.closePath();
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, "rgba(45,212,191,.35)"); g.addColorStop(1, "rgba(45,212,191,0)");
+  ctx.fillStyle = g; ctx.fill();
+  // line
+  ctx.beginPath(); data.forEach((v,i) => i?ctx.lineTo(x(i),y(v)):ctx.moveTo(x(i),y(v)));
+  ctx.strokeStyle = "#2dd4bf"; ctx.lineWidth = 2; ctx.stroke();
+}
+
+function runScene(n){
+  if (n===0) runCRM();
+  else if (n===1) runFirmware();
+  else if (n===2) runChirp();
+  else if (n===3) runDash();
+}
+
+/* ============================ live mode (best-effort) ============================ */
+let liveMode = false;
+function showBanner(msg, ms){
+  const b = document.getElementById("banner");
+  b.textContent = msg; b.classList.add("show");
+  setTimeout(() => b.classList.remove("show"), ms || 4200);
+}
+async function tryLive(){
+  // Requires presentation/config.js -> window.LIVE = { uplinkUrl, token }. Absent => not available.
+  if (!window.LIVE || !window.LIVE.uplinkUrl){
+    showBanner("Live unavailable — no config.js endpoint. Staying on replay.");
+    return false;
+  }
+  try {
+    const headers = window.LIVE.token ? { Authorization: "Bearer " + window.LIVE.token } : {};
+    const res = await fetch(window.LIVE.uplinkUrl, { headers });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    await res.json();   // shape handled by operator's proxy; reaching here = network OK
+    showBanner("● Live connected — streaming from ChirpStack.");
+    return true;
+  } catch (e){
+    showBanner("Live unreachable (network / CORS). Staying on replay.");
+    return false;
+  }
+}
+function setLive(on){
+  const pill = document.getElementById("modePill");
+  const tog  = document.getElementById("liveToggle");
+  liveMode = on;
+  tog.classList.toggle("on", on);
+  pill.classList.toggle("is-live", on);
+  pill.querySelector("small").textContent = on ? "LIVE" : "REPLAY";
+}
+
+/* ============================ wiring ============================ */
+document.getElementById("nextBtn").onclick = () => { pauseAuto(); next(); };
+document.getElementById("prevBtn").onclick = () => { pauseAuto(); prev(); };
+document.getElementById("playBtn").onclick = toggleAuto;
+dots.forEach(d => d.onclick = () => { pauseAuto(); go(+d.dataset.d); });
+stages.forEach(s => s.onclick = () => { pauseAuto(); go(+s.dataset.s); });
+
+document.getElementById("liveToggle").onclick = async () => {
+  if (liveMode){ setLive(false); showBanner("Switched to replay."); return; }
+  const ok = await tryLive();
+  setLive(ok);   // graceful: if live fails, stay replay but reflect attempt
+  if (!ok) setLive(false);
+};
+
+// on-page CRM walkthrough controls (scene 1)
+document.getElementById("crmPlay").onclick = toggleAuto;
+document.getElementById("crmPrev").onclick = () => { pauseAuto(); crmGo(crm.step - 1, false); };
+document.getElementById("crmNext").onclick = () => {
+  if (crm.step < SECTIONS.length - 1){ pauseAuto(); crmGo(crm.step + 1, false); }
+  else next();
+};
+
+function setPlayLabels(){
+  document.getElementById("playBtn").textContent = autoplay ? "⏸ Pause" : "▶ Play";
+  const cp = document.getElementById("crmPlay"); if (cp) cp.textContent = autoplay ? "⏸" : "▶";
+}
+function toggleAuto(){ autoplay ? pauseAuto() : resumeAuto(); }
+function pauseAuto(){
+  autoplay = false;
+  setPlayLabels();
+  document.body.classList.add("auto-off");
+  if (sceneTimer) clearTimeout(sceneTimer);
+  if (progTimer) clearInterval(progTimer);
+  if (crmTimer) clearTimeout(crmTimer);
+}
+function resumeAuto(){
+  autoplay = true;
+  setPlayLabels();
+  document.body.classList.remove("auto-off");
+  if (cur === 0) crmGo(crm.step < 0 ? 0 : crm.step, false);   // reschedule from current section
+  else startProgress();
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowRight"){ pauseAuto(); next(); }
+  else if (e.key === "ArrowLeft"){ pauseAuto(); prev(); }
+  else if (e.key === " "){ e.preventDefault(); toggleAuto(); }
+});
+
+/* go */
+go(0);
+</script>
+</body>
+</html>

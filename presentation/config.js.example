@@ -1,0 +1,27 @@
+/*
+ * presentation/config.js.example — OPTIONAL live-mode config for the presentation.
+ *
+ * Copy to presentation/config.js (gitignored) ONLY if you want the "Live" toggle to
+ * stream real data. Without this file, the presentation runs entirely in self-contained
+ * REPLAY mode (the default) and needs no network.
+ *
+ *   cp presentation/config.js.example presentation/config.js
+ *   # then edit the values below
+ *
+ * IMPORTANT — honest caveats:
+ *  - A page opened via file:// cannot talk to ChirpStack's gRPC API directly, and will
+ *    hit CORS. `uplinkUrl` must point at a small HTTP endpoint YOU expose on the internal
+ *    network that returns the latest decoded uplink as JSON — e.g. a ChirpStack HTTP
+ *    integration sink, an MQTT->HTTP bridge, or a tiny proxy in front of 10.10.8.140.
+ *  - You must be ON the internal network / VPN for this to resolve.
+ *  - NEVER commit a real token. presentation/config.js is gitignored for this reason.
+ *  - If anything fails (offline, CORS, auth, infra down) the deck shows a small banner
+ *    and silently stays on replay — live never blocks the presentation.
+ */
+window.LIVE = {
+  // HTTP endpoint returning the latest decoded uplink as JSON (operator-provided).
+  uplinkUrl: "http://10.10.8.140:8090/api/uplinks/latest",
+
+  // Bearer token for that endpoint, if it requires auth. Leave "" for none.
+  token: ""
+};

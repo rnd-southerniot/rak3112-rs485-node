@@ -1,0 +1,11 @@
+# Phase 7a watchdog-gate repro profile. Build/flash with:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.wdt-test" build flash monitor
+# Simulated field data (no meter needed) so the field loop runs; short interval + short watchdog
+# timeout; the loop deliberately stops feeding the TWDT after 2 cycles so it fires and the chip
+# resets — the next boot logs reset reason "task-WDT" and increments the NVS boot counter.
+# NEVER flash a production node with this profile (CONFIG_APP_DEBUG_WDT_STARVE).
+CONFIG_APP_FIELD_SIMULATE=y
+CONFIG_APP_FIELD_SAMPLE_INTERVAL_S=10
+CONFIG_APP_TASK_WDT_TIMEOUT_S=10
+CONFIG_APP_DEBUG_WDT_STARVE=y
+CONFIG_APP_DEBUG_WDT_STARVE_AFTER=2

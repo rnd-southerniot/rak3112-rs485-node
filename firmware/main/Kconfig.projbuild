@@ -139,4 +139,33 @@ config APP_FIELD_SAMPLE_INTERVAL_S
     help
         AS923 dwell + fair-use friendly. Keep >= 60 for normal operation.
 
+# ---------------------------------------------------------------------------
+# Phase 7a — resilience: task-watchdog timeout + a debug starve path for the gate.
+# ---------------------------------------------------------------------------
+
+config APP_TASK_WDT_TIMEOUT_S
+    int "Resilience: task-watchdog timeout (seconds)"
+    range 5 300
+    default 15
+    help
+        The field-app task subscribes to the Task Watchdog Timer and feeds it at least every 2 s
+        (the inter-sample sleep is fed in 2 s chunks). This timeout must exceed that 2 s feed period
+        plus worst-case Modbus + LoRaWAN uplink time. 15 s is a safe bench default; revisit once
+        light-sleep duty-cycling lands (Phase 7b) if the feed cadence changes.
+
+config APP_DEBUG_WDT_STARVE
+    bool "Debug: stop feeding the task watchdog after a few cycles (7a gate)"
+    default n
+    help
+        Phase 7a smoke-gate aid. When set, the field-app loop deliberately stops feeding the Task
+        Watchdog after APP_DEBUG_WDT_STARVE_AFTER cycles and holds, so the TWDT fires and resets the
+        chip — proving the watchdog is armed (the next boot logs reset reason "task-WDT"). NEVER ship
+        with this set.
+
+config APP_DEBUG_WDT_STARVE_AFTER
+    int "Debug: cycles before starving the watchdog"
+    depends on APP_DEBUG_WDT_STARVE
+    range 1 20
+    default 3
+
 endmenu

@@ -494,6 +494,62 @@ confidence *before* the wiring fix — and the same harness immediately confirme
 **Remaining Phase 6 (6c):** NVS register-set config, ADR-005 payload schema (compact versioned
 binary + ChirpStack JS codec), encode MFM384 reads into the LoRaWAN uplink, then push/CI/merge/tag.
 
+## Phase 7a — Resilience: task watchdog + brownout + reset-cause (2026-06-25)
+
+**Goal (7a).** Arm the Task Watchdog on the field-app task, log the reset cause + a persistent boot
+counter at startup, and keep the brownout detector enabled — so a hung loop or a sagging rail forces
+a clean, *logged* reset instead of a silent wedge.
+
+**Implementation (`app_main.c`, `Kconfig.projbuild`, `sdkconfig.defaults`).**
+- `log_boot_diagnostics()` runs first in `app_main`: `esp_reset_reason()` → human label, plus an NVS
+  (`faultlog/bootcnt`) counter incremented every boot (seed of the firmware §8 fault log).
+- `field_wdt_arm()` reconfigures the TWDT to `CONFIG_APP_TASK_WDT_TIMEOUT_S` (panic-on-starve) and
+  subscribes the field-app task; the loop calls `esp_task_wdt_reset()` at the top of each cycle.
+- **Key design point — fed sleep.** The inter-sample `vTaskDelay(period)` is replaced by
+  `wdt_fed_delay()`, which splits the wait into ≤ 2 s chunks and feeds the WDT each chunk. Without
+  this, a 60 s sample interval would starve any sub-60 s watchdog; with it, the long intentional
+  sleep keeps the dog fed while a genuine hang in the work section still trips it.
+- Brownout: `CONFIG_ESP_BROWNOUT_DET=y` at the IDF S3 default level (LVL_SEL_7) — pinned explicitly,
+  not raised (a too-high threshold would spuriously reset on the RT6160 rail).
+- Gate aid: `CONFIG_APP_DEBUG_WDT_STARVE` stops feeding after N cycles (profile
+  `sdkconfig.defaults.wdt-test`). **Never ship set.**
+
+**HW pre-flight (passed).** Single port `/dev/cu.usbmodem1301`, ESP32-S3, MAC `3c:dc:75:6f:85:dc` =
+the project board (USB enumeration also confirms H1 / 3V3 in). No second board to confuse.
+
+**Smoke gate — both halves PASS (HIL, project board).**
+
+*Half 1 — the watchdog fires + the reset cause is logged* (profile `wdt-test`, 10 s timeout, starve
+after 2 cycles). Captured across reboots:
+```
+I (15904) lora: uplink OK (rx window=0)
+E (15904) app: DEBUG: starving the task watchdog after 2 cycle(s) — expect a TWDT reset in ~10s (7a gate)
+E (23441) task_wdt: Task watchdog got triggered. The following tasks/users did not reset the watchdog in time:
+E (23441) task_wdt: Aborting.
+Rebooting...
+rst:0xc (RTC_SW_CPU_RST),boot:0x2b (SPI_FAST_FLASH_BOOT)
+W (852) app: === boot #2 — reset reason: task-WDT (6) ===
+W (853) app: previous boot ended in a WATCHDOG reset
+I (896) lora: session restored (no re-join); uplink DR3 (SF9)
+I (896) app: task watchdog armed: 10s timeout, panic-on-starve
+```
+The NVS boot counter incremented `#2 → #3 → #4` across successive WDT resets; each boot correctly
+reported `reset reason: task-WDT (6)`. (Session also restored from NVS, no re-join — Phase 5 carry.)
+
+*Half 2 — clean run, no spurious resets* (sim field app, starve OFF). A **~11.5-min bench soak**
+(two captures on one uninterrupted run, ~49 uplinks at the 10 s interval): **zero `task_wdt`
+triggers, zero brownout events, zero reboots.** The `esp_log` millisecond timer advanced
+monotonically across the whole run (15.9 s → 215.6 s → 303 s → **690 s**, never returning to 0),
+which is the proof of "no reset" — a reset would zero it.
+
+**Result: 7a GREEN.** Both gate conditions met on the project board. `field_wdt_arm()` + the fed-sleep
+pattern carry forward to 7b (light-sleep will change the feed cadence — revisit `APP_TASK_WDT_TIMEOUT_S`
+and feed-during-wake then).
+
+**Lesson.** A watchdog on a long-interval sampler is only useful if the *intended* sleep keeps it fed.
+Feeding once per multi-second loop forces the timeout above the interval and blinds the dog during the
+sleep; chunked feeding (≤ 2 s) keeps the timeout short while still catching real hangs.
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

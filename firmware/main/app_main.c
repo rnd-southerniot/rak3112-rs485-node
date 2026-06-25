@@ -5,6 +5,10 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "esp_task_wdt.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "sdkconfig.h"
 
 #include "gpio_remap.h"
@@ -17,6 +21,68 @@
 #endif
 
 static const char *TAG = "app";
+
+static const char *reset_reason_str(esp_reset_reason_t r)
+{
+    switch (r) {
+    case ESP_RST_POWERON:
+        return "power-on";
+    case ESP_RST_EXT:
+        return "external";
+    case ESP_RST_SW:
+        return "software";
+    case ESP_RST_PANIC:
+        return "panic/exception";
+    case ESP_RST_INT_WDT:
+        return "interrupt-WDT";
+    case ESP_RST_TASK_WDT:
+        return "task-WDT";
+    case ESP_RST_WDT:
+        return "other-WDT";
+    case ESP_RST_DEEPSLEEP:
+        return "deep-sleep-wake";
+    case ESP_RST_BROWNOUT:
+        return "brownout";
+    case ESP_RST_SDIO:
+        return "SDIO";
+    case ESP_RST_USB:
+        return "USB";
+    case ESP_RST_JTAG:
+        return "JTAG";
+    default:
+        return "unknown";
+    }
+}
+
+/* Reset-cause + persistent boot counter, logged once at startup (7a; seed of the firmware §8 fault
+ * log). */
+static void log_boot_diagnostics(void)
+{
+    const esp_reset_reason_t reason = esp_reset_reason();
+
+    esp_err_t nv = nvs_flash_init();
+    if (nv == ESP_ERR_NVS_NO_FREE_PAGES || nv == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nv = nvs_flash_init();
+    }
+    uint32_t boot = 0;
+    nvs_handle_t h;
+    if (nv == ESP_OK && nvs_open("faultlog", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_get_u32(h, "bootcnt", &boot); /* leaves boot=0 if the key is unset */
+        boot += 1;
+        nvs_set_u32(h, "bootcnt", boot);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+
+    ESP_LOGW(TAG, "=== boot #%lu — reset reason: %s (%d) ===", (unsigned long)boot,
+             reset_reason_str(reason), (int)reason);
+    if (reason == ESP_RST_TASK_WDT || reason == ESP_RST_INT_WDT || reason == ESP_RST_WDT) {
+        ESP_LOGW(TAG, "previous boot ended in a WATCHDOG reset");
+    } else if (reason == ESP_RST_BROWNOUT) {
+        ESP_LOGW(TAG, "previous boot ended in a BROWNOUT — inspect the 3V3 rail / RT6160");
+    }
+}
 
 /* GPIO9/GPIO40 held deliberate-floating on V1.1 (ADR-001 EC-4/EC-9; Phase 3 carry-forward). */
 static void hold_reserved_pins_floating(void)
@@ -165,6 +231,39 @@ static void run_modbus_poll(void)
 }
 #endif /* CONFIG_APP_MODBUS_POLL_ON_BOOT */
 
+/* Arm the Task Watchdog for the field-app task; fed once per cycle + during the sleep (7a). */
+static void field_wdt_arm(void)
+{
+    esp_task_wdt_config_t cfg = {
+        .timeout_ms = 1000u * (uint32_t)CONFIG_APP_TASK_WDT_TIMEOUT_S,
+        .idle_core_mask = (1u << portNUM_PROCESSORS) - 1u,
+        .trigger_panic = true,
+    };
+    /* IDF already init'd the TWDT (CONFIG_ESP_TASK_WDT_INIT) — reconfigure to our timeout. */
+    esp_err_t err = esp_task_wdt_reconfigure(&cfg);
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_ERROR_CHECK(esp_task_wdt_init(&cfg));
+    } else {
+        ESP_ERROR_CHECK(err);
+    }
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL)); /* watch this (field-app) task */
+    ESP_LOGI(TAG, "task watchdog armed: %ds timeout, panic-on-starve",
+             CONFIG_APP_TASK_WDT_TIMEOUT_S);
+}
+
+/* vTaskDelay split into <=2 s chunks, feeding the WDT each chunk so the long inter-sample sleep
+ * never starves the watchdog (a hang in the work section above still trips it). */
+static void wdt_fed_delay(TickType_t total)
+{
+    const TickType_t chunk = pdMS_TO_TICKS(2000);
+    while (total > 0) {
+        const TickType_t d = total < chunk ? total : chunk;
+        vTaskDelay(d);
+        ESP_ERROR_CHECK(esp_task_wdt_reset());
+        total -= d;
+    }
+}
+
 /*
  * Field application: sample the configured device (real Modbus or simulated) then LoRaWAN-uplink a
  * compact ADR-005 payload, every CONFIG_APP_FIELD_SAMPLE_INTERVAL_S. Assumes lora is already
@@ -193,7 +292,10 @@ static void run_field_app(void)
              CONFIG_APP_FIELD_SAMPLE_INTERVAL_S);
 #endif
 
+    field_wdt_arm();
+
     for (uint32_t tick = 0;; ++tick) {
+        esp_task_wdt_reset();
         uint8_t buf[PAYLOAD_MAX];
         size_t len = 0;
         uint8_t flags = 0;
@@ -234,13 +336,26 @@ static void run_field_app(void)
         if (len > 0) {
             lora_send(buf, len);
         }
-        vTaskDelay(period);
+
+#if CONFIG_APP_DEBUG_WDT_STARVE
+        if (tick + 1 >= (uint32_t)CONFIG_APP_DEBUG_WDT_STARVE_AFTER) {
+            ESP_LOGE(TAG,
+                     "DEBUG: starving the task watchdog after %lu cycle(s) — expect a TWDT reset "
+                     "in ~%ds (7a gate)",
+                     (unsigned long)(tick + 1), CONFIG_APP_TASK_WDT_TIMEOUT_S);
+            for (;;) {
+                vTaskDelay(pdMS_TO_TICKS(1000)); /* deliberately NOT feeding the watchdog */
+            }
+        }
+#endif
+        wdt_fed_delay(period);
     }
 }
 
 void app_main(void)
 {
     hold_reserved_pins_floating();
+    log_boot_diagnostics();
 
 #if CONFIG_APP_MODBUS_POLL_ON_BOOT
     run_modbus_poll(); /* bench bring-up mode — does not return */

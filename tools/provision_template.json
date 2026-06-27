@@ -1,0 +1,104 @@
+{
+  "$schema": "https://southerniot.net/schemas/rak3112-provision-template.v1.json",
+  "_comment": [
+    "Declarative source-of-values template for provisioning a rak3112-rs485-node.",
+    "Secrets are ${ENV:KEY} references resolved at run time from firmware/.env or",
+    "~/.config/siot/rak3112-crm.env — NEVER inline a DevEUI/AppKey/password here.",
+    "Companion contract: docs/PROVISIONING_API_CONTRACT.md.",
+    "Field-level 'source' values: env-firmware | env-crm | constant | derived | crm-minted."
+  ],
+  "templateVersion": 1,
+
+  "valueSources": {
+    "deveui":   { "value": "${ENV:LORAWAN_DEVEUI}",  "source": "env-firmware", "format": "hex16", "secret": false, "transform": "lowercase" },
+    "joineui":  { "value": "${ENV:LORAWAN_JOINEUI}", "source": "env-firmware", "format": "hex16", "secret": false, "transform": "lowercase", "default": "0000000000000000" },
+    "appkey":   { "value": "${ENV:LORAWAN_APPKEY}",  "source": "env-firmware", "format": "hex32", "secret": true,  "transform": "lowercase", "redactInLogs": true },
+    "serial":   { "value": "RAK3112-RS485-${deveui[-6:]|upper}", "source": "derived" }
+  },
+
+  "planeA_crm": {
+    "_role": "Network/identity — registers the device into ChirpStack AS923 via the SCOMM CRM workflow.",
+    "driver": "tools/provision_node.py",
+    "auth": {
+      "endpoint": "POST /auth/login",
+      "base":     "${ENV:CRM_BASE}",
+      "email":    "${ENV:CRM_EMAIL}",
+      "password": "${ENV:CRM_PASSWORD}",
+      "source":   "env-crm (~/.config/siot/rak3112-crm.env, 0600)"
+    },
+    "product": {
+      "findOrCreateBy": "code",
+      "code": "RAK3112-RS485-AS923",
+      "name": "RAK3112 RS-485 ⇄ LoRaWAN AS923 Node",
+      "description": "RS-485 ⇄ LoRaWAN AS923 industrial sensor/gateway node",
+      "isLorawanProduct": true,
+      "lorawanRegion": "AS923",
+      "source": "constant"
+    },
+    "sopTemplate": {
+      "version": 1,
+      "steps": [
+        { "id": "step-1", "title": "Bench bring-up", "description": "AS923 OTAA bench bring-up", "order": 1 }
+      ],
+      "source": "constant"
+    },
+    "hardware": {
+      "catalogLookupBy": "name",
+      "name": "ESP32-WROOM-32",
+      "_note": "Reuses a valid catalog entry; true identity carried in serial/DevEUI.",
+      "source": "constant"
+    },
+    "task": {
+      "clientName": "Southern IoT — Bench (rak3112-rs485-node)",
+      "clientEmail": "rnd@southerniot.net",
+      "clientPhone": "+8800000000000",
+      "clientAddress": "R&D Bench, Dhaka, Bangladesh",
+      "contactPerson": "Arif",
+      "source": "constant",
+      "_note": "Replace with real client/site metadata for a field install."
+    },
+    "workflow": [
+      { "status": "SCHEDULED_VISIT",                "body": { "scheduledDate": "2026-06-25T10:00:00Z" } },
+      { "status": "REQUIREMENTS_COMPLETE",          "body": { "reportData": {
+          "siteConditions": "Bench", "signalStrength": "-60 dBm", "powerAvailability": "USB",
+          "installationLocation": "R&D bench", "notes": "AS923 OTAA bring-up" } } },
+      { "status": "HARDWARE_PROCUREMENT_COMPLETE",  "body": { "hardwareList": [
+          { "hardwareId": "${resolved.hardware_id}", "quantity": 1, "notes": "RAK3112 RS-485 node" } ] } },
+      { "status": "HARDWARE_PREPARED_COMPLETE",     "body": { "deviceList": [ {
+          "hardwareId": "${resolved.hardware_id}", "deviceSerial": "${serial}",
+          "firmwareVersion": "phase5-bringup", "devEui": "${deveui}", "appKey": "${appkey}",
+          "notes": "AS923 OTAA bench bring-up" } ] } },
+      { "status": "READY_FOR_INSTALLATION",         "body": {},
+        "_note": "MUST be empty — DTO whitelist 400s on any extra field. Triggers async ChirpStack registration." }
+    ],
+    "preInstallationChecklist": {
+      "devicesTestComplete": true, "firmwareLoaded": true, "qrCodesPrinted": true,
+      "clientConfirmedDate": true, "accessArranged": true, "contactAvailable": true,
+      "installationGuide": true, "networkConfig": true, "credentialsReady": true,
+      "source": "constant"
+    },
+    "verify": {
+      "poll": "GET /workflow/tasks/{taskId}  -> deviceProvisionings[].lorawanProvisioningStatus in {COMPLETED,FAILED}",
+      "confirm": "GET /chirpstack/device/${deveui}  -> found == true"
+    }
+  },
+
+  "planeB_nvs": {
+    "_role": "Device/runtime — writes the same creds + Modbus field config into node NVS namespace 'prov' (additive; nonces preserved).",
+    "driver": "tools/provision_nvs.py",
+    "transport": "USB-Serial-JTAG console (prov>)",
+    "lorawan": {
+      "command": "prov-lorawan <deveui16> <joineui16> <appkey32>",
+      "deveui": "${deveui}", "joineui": "${joineui}", "appkey": "${appkey}"
+    },
+    "modbus": {
+      "command": "prov-modbus <dev> <baud> <par> <unit> <interval_s>",
+      "dev":  { "value": "${ENV:MODBUS_DEVICE}",     "source": "env-firmware", "encoding": "mfm384->0, rsfsjt|wind|1->1" },
+      "baud": { "value": "${ENV:MODBUS_BAUD}",       "source": "env-firmware", "default": 9600 },
+      "par":  { "value": "${ENV:MODBUS_PARITY}",     "source": "env-firmware", "encoding": "N->0, E->1, O->2" },
+      "unit": { "value": "${ENV:MODBUS_SLAVE_ID}",   "source": "env-firmware", "default": 1 },
+      "intv": { "value": "${ENV:SAMPLE_INTERVAL_S}", "source": "env-firmware", "default": 60, "min": 10 }
+    },
+    "commit": "prov-done  (commit + restart into field mode)"
+  }
+}

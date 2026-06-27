@@ -734,6 +734,42 @@ light-sleep is opt-in for the battery bench.
 battery. (2) De-assert DTR/RTS when reading a USJ port from a script. (3) Recover a wedged USJ board
 with plug-in-while-holding-BOOT (download-on-plug), not just reset.
 
+## Session park — 2026-06-28 (7b rig + stepper scan; bench not ready)
+
+**Where we left off** (bench not set up; continuing tomorrow).
+
+**7b current-measurement rig (parked).** Plan B for the OQ-12 average current is an **INA238**
+high-side monitor read by a **Raspberry Pi** (`mcp-gateway`, 192.168.68.109, SSH key
+`id_ed25519_siot_dev_m5`). Tool `tools/ina238_current.py` is on the Pi at `~/ina238_current.py`
+(integrates true time-average over the duty cycle); Pi `i2c-1` enabled at runtime (**non-persistent**
+— re-run `sudo dtparam i2c_arm=on` after a reboot), `i2c-tools` installed. Procedure: power the rak
+via **P1 with USB unplugged** (no VBUS → light-sleep runs), INA in series, set `--rshunt` to the
+board's shunt, run. **Parked because:** bench not ready + the INA238 is in use on another project.
+The **light-sleep-ON** image is currently on the rak board → USB is wedge-prone; if `esptool` can't
+connect, recover via **plug-in-while-holding-SW2(BOOT)** → download mode → reflash.
+
+**Stepper side-quest (LEESN IG28ET — read its registers over RS-485).** The node's RS-485 Modbus
+master can read this drive. Researched map = **Leadshine iEM-RS convention** (the IG-series clones it;
+confirm against LEESN's PC tool over the `COM` USB before trusting addresses):
+- Comms: Modbus RTU, **FC03** read / FC06 write-one / FC10 write-multi, holding registers only,
+  **Slave ID default 1** (DIP), baud 9600/19200/38400/115200 (factory **38400**), parity configurable,
+  CRC-16 low-first, 32-bit values = high+low 16-bit register pair.
+- Read telemetry: `0x1003` motion-state bits, `0x1014/0x1015` feedback position (pulses),
+  `0x1012/0x1013` profile position, `0x1010/0x1011` following error, `0x1046/0x1047` feedback
+  velocity (rpm), `0x1044/0x1045` profile velocity, `0x2203` current-alarm code, `0x0191` peak
+  current (0.1 A).
+- Write (**moves the shaft** — keep unloaded): `0x000F` Pr0.07=1 enable-via-RS485; `0x1801` control
+  word (JOG `0x4001/0x4002`, reset-alarm `0x1111`, save-EEPROM `0x2211`).
+- Wiring (read-only safe): IG28ET `485A → CN1 A`, `485B → CN1 B`, motor power-GND `→ CN1 GND`
+  (shared reference). Motor on its **own 9–36 V** — never route that into the node.
+- Built `firmware/sdkconfig.defaults.scan-stepper` (scan-on-boot, light-sleep OFF so no USB wedge;
+  probe FC03 `0x0191`, IDs 1–31 × common bauds × {8N1,8E1,8O1}). **Not yet flashed/wired** (bench not
+  ready). Next: flash the scan profile → find the drive's address/baud → poll `0x1003`/`0x1014` to
+  validate the map. Sources: Leadshine iEM-RS manual, leesn.com.
+
+**New team tooling this session:** `docs/prompts/add-sensor-from-datasheet.md` (generate a sensor's
+read/sim/payload from a datasheet + proven Arduino code — Arduino is ground-truth for wire details).
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

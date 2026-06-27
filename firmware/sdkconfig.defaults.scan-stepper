@@ -1,0 +1,11 @@
+# Bench profile: Modbus RTU bus scanner tuned for a LEESN IG28ET / Leadshine iEM-RS-class
+# integrated stepper drive (holding registers, FC03). Build/flash:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.scan-stepper" build flash monitor
+# Sweeps unit IDs 1-31 x {9600,4800,19200,38400,57600,115200} x {8N1,8E1,8O1}, probing FC03 reg
+# 0x0191 (401 = peak current, a known-readable holding reg). A Modbus exception also counts as
+# present. Drive factory defaults: Slave ID 1, baud 38400 (or 115200), parity configurable.
+CONFIG_APP_MODBUS_SCAN_ON_BOOT=y
+CONFIG_APP_MODBUS_SCAN_ID_LO=1
+CONFIG_APP_MODBUS_SCAN_ID_HI=31
+CONFIG_APP_MODBUS_SCAN_TIMEOUT_MS=300
+CONFIG_APP_MODBUS_SCAN_PROBE_REG=401

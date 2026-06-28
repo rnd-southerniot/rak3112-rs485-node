@@ -1,0 +1,6 @@
+# Phase 7b diagnostic: light-sleep ON + a per-cycle WS2812 wake-flash. On an external supply, a
+# green flash every interval = the node is WAKING and cycling (no host/console needed); one flash
+# then dark = it hung in light-sleep. Has a tiny per-cycle current blip — drop the LED for the
+# clean average-current run.
+CONFIG_APP_LIGHT_SLEEP=y
+CONFIG_APP_FIELD_LED_BLINK=y

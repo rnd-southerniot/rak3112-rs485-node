@@ -1,6 +1,0 @@
-# Bench overlay: read-only Modbus register-discovery dump of the IG28ET (CN1, 115200 8N1 unit 1).
-# Sweeps FC03 across candidate blocks and logs non-zero registers — reverse-engineer the real map.
-# Read-only: no FC06, no motion.
-CONFIG_APP_MODBUS_DUMP_ON_BOOT=y
-CONFIG_APP_MODBUS_DUMP_UNIT=1
-CONFIG_APP_MODBUS_DUMP_BAUD=115200

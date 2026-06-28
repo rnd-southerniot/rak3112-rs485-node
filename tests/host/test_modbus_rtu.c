@@ -140,99 +140,6 @@ static void test_regs_to_f32(void)
     CHECK(modbus_regs_to_f32(NULL, MODBUS_WORD_ORDER_ABCD) == 0.0f);
 }
 
-static void test_build_write_single(void)
-{
-    /* Write value 0x4001 to holding register 0x1801, slave 1 (an IG28ET jog control word). */
-    uint8_t req[MODBUS_WRITE_SINGLE_LEN] = {0};
-    const size_t n = modbus_build_write_single(req, 1, 0x1801, 0x4001);
-    CHECK(n == MODBUS_WRITE_SINGLE_LEN);
-    const uint8_t expect[6] = {0x01, 0x06, 0x18, 0x01, 0x40, 0x01};
-    CHECK(memcmp(req, expect, 6) == 0);
-    const uint16_t crc = modbus_crc16(req, 6);
-    CHECK(req[6] == (uint8_t)(crc & 0xFFu)); /* CRC low byte first */
-    CHECK(req[7] == (uint8_t)(crc >> 8));
-    /* Null out rejected. */
-    CHECK(modbus_build_write_single(NULL, 1, 0x1801, 0x4001) == 0);
-}
-
-static void test_parse_write_single(void)
-{
-    uint8_t exc = 0;
-
-    /* Normal response echoes the request verbatim → MODBUS_OK when addr+value match. */
-    uint8_t ok[MODBUS_WRITE_SINGLE_LEN] = {0x01, 0x06, 0x18, 0x01, 0x40, 0x01};
-    size_t len = frame_with_crc(ok, 6);
-    CHECK(modbus_parse_write_single_response(ok, len, 1, 0x1801, 0x4001, &exc) == MODBUS_OK);
-
-    /* Exception (0x86 = 0x06|0x80), code 0x02. */
-    uint8_t ex[8] = {0x01, 0x86, 0x02};
-    len = frame_with_crc(ex, 3);
-    exc = 0;
-    CHECK(modbus_parse_write_single_response(ex, len, 1, 0x1801, 0x4001, &exc) ==
-          MODBUS_ERR_EXCEPTION);
-    CHECK(exc == 0x02u);
-
-    /* Echo mismatch: slave wrote a different value than asked → MODBUS_ERR_BYTECOUNT. */
-    uint8_t mm[MODBUS_WRITE_SINGLE_LEN] = {0x01, 0x06, 0x18, 0x01, 0x40, 0x02};
-    len = frame_with_crc(mm, 6);
-    CHECK(modbus_parse_write_single_response(mm, len, 1, 0x1801, 0x4001, NULL) ==
-          MODBUS_ERR_BYTECOUNT);
-
-    /* Wrong slave, CRC corruption, too-short, and null all rejected. */
-    uint8_t ws[MODBUS_WRITE_SINGLE_LEN] = {0x02, 0x06, 0x18, 0x01, 0x40, 0x01};
-    len = frame_with_crc(ws, 6);
-    CHECK(modbus_parse_write_single_response(ws, len, 1, 0x1801, 0x4001, NULL) == MODBUS_ERR_SLAVE);
-
-    uint8_t bad[MODBUS_WRITE_SINGLE_LEN] = {0x01, 0x06, 0x18, 0x01, 0x40, 0x01};
-    len = frame_with_crc(bad, 6);
-    bad[4] ^= 0xFFu; /* corrupt after CRC computed */
-    CHECK(modbus_parse_write_single_response(bad, len, 1, 0x1801, 0x4001, NULL) == MODBUS_ERR_CRC);
-
-    uint8_t shortf[4] = {0x01, 0x06, 0x18, 0x01};
-    CHECK(modbus_parse_write_single_response(shortf, 4, 1, 0x1801, 0x4001, NULL) ==
-          MODBUS_ERR_SHORT);
-    CHECK(modbus_parse_write_single_response(NULL, len, 1, 0x1801, 0x4001, NULL) == MODBUS_ERR_ARG);
-}
-
-static void test_build_write_multi(void)
-{
-    /* Golden vector from the LEESN 485 manual (run-to-absolute-position 10000 @ 0x00D0):
-     * 01 10 00 D0 00 02 04 27 10 00 00 F5 82 — qty 2, low word 0x2710 first, high word 0x0000. */
-    uint8_t out[16] = {0};
-    const uint16_t regs[2] = {0x2710u, 0x0000u};
-    const size_t n = modbus_build_write_multi(out, sizeof(out), 1, 0x00D0, 2, regs);
-    const uint8_t expect[13] = {0x01, 0x10, 0x00, 0xD0, 0x00, 0x02, 0x04,
-                                0x27, 0x10, 0x00, 0x00, 0xF5, 0x82};
-    CHECK(n == 13u); /* 9 + 2*qty */
-    CHECK(memcmp(out, expect, 13) == 0);
-
-    /* Bad args: null out/regs, qty 0, qty over cap, and too-small buffer all rejected. */
-    CHECK(modbus_build_write_multi(NULL, sizeof(out), 1, 0x00D0, 2, regs) == 0);
-    CHECK(modbus_build_write_multi(out, sizeof(out), 1, 0x00D0, 2, NULL) == 0);
-    CHECK(modbus_build_write_multi(out, sizeof(out), 1, 0x00D0, 0, regs) == 0);
-    CHECK(modbus_build_write_multi(out, 8, 1, 0x00D0, 2, regs) == 0); /* needs 13, cap 8 */
-}
-
-static void test_parse_write_multi(void)
-{
-    uint8_t exc = 0;
-    /* Normal response echoes addr + qty: 01 10 00 D0 00 02 + CRC. */
-    uint8_t ok[MODBUS_WRITE_MULTI_RESP_LEN] = {0x01, 0x10, 0x00, 0xD0, 0x00, 0x02};
-    size_t len = frame_with_crc(ok, 6);
-    CHECK(modbus_parse_write_multi_response(ok, len, 1, 0x00D0, 2, &exc) == MODBUS_OK);
-
-    /* Exception 0x90, code 0x03. */
-    uint8_t ex[8] = {0x01, 0x90, 0x03};
-    len = frame_with_crc(ex, 3);
-    CHECK(modbus_parse_write_multi_response(ex, len, 1, 0x00D0, 2, &exc) == MODBUS_ERR_EXCEPTION);
-    CHECK(exc == 0x03u);
-
-    /* qty echo mismatch -> BYTECOUNT. */
-    uint8_t mm[MODBUS_WRITE_MULTI_RESP_LEN] = {0x01, 0x10, 0x00, 0xD0, 0x00, 0x01};
-    len = frame_with_crc(mm, 6);
-    CHECK(modbus_parse_write_multi_response(mm, len, 1, 0x00D0, 2, NULL) == MODBUS_ERR_BYTECOUNT);
-}
-
 int main(void)
 {
     test_crc16_kat();
@@ -241,10 +148,6 @@ int main(void)
     test_parse_exception();
     test_parse_errors();
     test_regs_to_f32();
-    test_build_write_single();
-    test_parse_write_single();
-    test_build_write_multi();
-    test_parse_write_multi();
 
     printf("modbus_rtu: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

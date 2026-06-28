@@ -37,28 +37,6 @@ typedef struct {
 modbus_status_t modbus_master_read(uart_port_t port, uint8_t unit_id, uint8_t func, uint16_t addr,
                                    uint16_t qty, uint32_t timeout_ms, uint16_t *regs, uint8_t *exc);
 
-/*
- * One write-single-register transaction (FC06). Writes `value` to holding register `addr` on
- * `unit_id`, then validates the slave's echo. Returns MODBUS_OK on a matching echo;
- * MODBUS_ERR_EXCEPTION (with *exc set) if the slave rejected it; or a framing/timeout error.
- *
- * WARNING: on a motor drive, FC06 to a control/enable register COMMANDS MOTION. Only call this
- * behind an explicit hardware-safety gate (motor secured, unloaded, current-limited).
- */
-modbus_status_t modbus_master_write_single(uart_port_t port, uint8_t unit_id, uint16_t addr,
-                                           uint16_t value, uint32_t timeout_ms, uint8_t *exc);
-
-/*
- * One write-multiple-registers transaction (FC16). Writes `qty` registers from `regs` to
- * consecutive addresses starting at `addr` (used for 32-bit values across a register pair), then
- * validates the slave's addr/qty echo. Returns MODBUS_OK / MODBUS_ERR_EXCEPTION / framing error.
- *
- * WARNING: on a motor drive this COMMANDS MOTION (e.g. run-to-position). Gate with hardware safety.
- */
-modbus_status_t modbus_master_write_multi(uart_port_t port, uint8_t unit_id, uint16_t addr,
-                                          uint16_t qty, const uint16_t *regs, uint32_t timeout_ms,
-                                          uint8_t *exc);
-
 /* Probe a single unit ID (FC03, 1 register @ `addr`). Fills *info if non-null. */
 mb_probe_t modbus_master_probe(uart_port_t port, uint8_t unit_id, uint16_t addr,
                                uint32_t timeout_ms, mb_probe_info_t *info);

@@ -38,49 +38,6 @@ modbus_status_t modbus_master_read(uart_port_t port, uint8_t unit_id, uint8_t fu
     return modbus_parse_read_response(resp, (size_t)got, unit_id, func, qty, regs, exc);
 }
 
-modbus_status_t modbus_master_write_single(uart_port_t port, uint8_t unit_id, uint16_t addr,
-                                           uint16_t value, uint32_t timeout_ms, uint8_t *exc)
-{
-    uint8_t req[MODBUS_WRITE_SINGLE_LEN];
-    const size_t req_len = modbus_build_write_single(req, unit_id, addr, value);
-    if (req_len == 0) {
-        return MODBUS_ERR_ARG;
-    }
-
-    uart_flush_input(port); /* drop any stale bytes before the transaction */
-    (void)rs485_write(port, req, req_len);
-    uart_wait_tx_done(port, pdMS_TO_TICKS(100)); /* frame out + line turned to RX */
-
-    uint8_t resp[MB_RESP_MAX];
-    const int got = rs485_read(port, resp, MODBUS_WRITE_SINGLE_LEN, timeout_ms);
-    if (got <= 0) {
-        return MODBUS_ERR_SHORT; /* timeout / nothing */
-    }
-    return modbus_parse_write_single_response(resp, (size_t)got, unit_id, addr, value, exc);
-}
-
-modbus_status_t modbus_master_write_multi(uart_port_t port, uint8_t unit_id, uint16_t addr,
-                                          uint16_t qty, const uint16_t *regs, uint32_t timeout_ms,
-                                          uint8_t *exc)
-{
-    uint8_t req[MB_RESP_MAX];
-    const size_t req_len = modbus_build_write_multi(req, sizeof(req), unit_id, addr, qty, regs);
-    if (req_len == 0) {
-        return MODBUS_ERR_ARG;
-    }
-
-    uart_flush_input(port);
-    (void)rs485_write(port, req, req_len);
-    uart_wait_tx_done(port, pdMS_TO_TICKS(100));
-
-    uint8_t resp[16];
-    const int got = rs485_read(port, resp, MODBUS_WRITE_MULTI_RESP_LEN, timeout_ms);
-    if (got <= 0) {
-        return MODBUS_ERR_SHORT;
-    }
-    return modbus_parse_write_multi_response(resp, (size_t)got, unit_id, addr, qty, exc);
-}
-
 mb_probe_t modbus_master_probe(uart_port_t port, uint8_t unit_id, uint16_t addr,
                                uint32_t timeout_ms, mb_probe_info_t *info)
 {

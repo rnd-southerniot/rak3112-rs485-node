@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <stdlib.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -19,13 +18,9 @@
 #include "ota.h"
 #include "payload.h"
 #include "provisioning.h"
-#if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT ||                            \
-    CONFIG_APP_MODBUS_JOG_CONSOLE || CONFIG_APP_MODBUS_DUMP_ON_BOOT || !CONFIG_APP_FIELD_SIMULATE
+#if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT || !CONFIG_APP_FIELD_SIMULATE
 #include "modbus_master.h"
 #include "rs485.h"
-#endif
-#if CONFIG_APP_MODBUS_JOG_CONSOLE
-#include "esp_console.h"
 #endif
 
 static const char *TAG = "app";
@@ -239,368 +234,6 @@ static void run_modbus_poll(void)
 }
 #endif /* CONFIG_APP_MODBUS_POLL_ON_BOOT */
 
-#if CONFIG_APP_MODBUS_JOG_CONSOLE
-/* -----------------------------------------------------------------------------------------------
- * Bench JOG console for a Modbus motor drive (LEESN IG28ET / Leadshine iEM-RS map, researched in
- * docs/RUNBOOK.md "Stepper side-quest"). Boots IDLE; the shaft turns only while a jog command runs,
- * and every jog is bounded (1-5 s) and auto-STOPs. FC06 writes here COMMAND MOTION — gated by the
- * hardware-safety checklist before this mode is ever flashed. mot-read is read-only.
- * --------------------------------------------------------------------------------------------- */
-/* Verified against the LEESN "485 Communication Manual" V126 (manufacturer PDF). The earlier
- * Leadshine-iEM-RS 0x1xxx/CiA402 guesses were wrong — those addresses don't exist on this drive
- * (it echoed FC06 writes to them but the whole 0x1xxx range reads 0), which is why the jog was
- * inert. Real map: jog = 0x00CA (self-contained command word), enable = 0x00D4, feedback at 0x00xx.
- */
-#define IG_REG_JOG 0x00CAu     /* Motor Jog command word (WriteWORD) — bit layout in jog_word() */
-#define IG_REG_ENABLE 0x00D4u  /* Offline/Enable: low byte 0 = enable, 1 = release */
-#define IG_REG_POS 0x0004u     /* Real-time position, INT32 @ 0x0004..5 (low word first) */
-#define IG_REG_SPEED 0x0019u   /* Real-time speed, INT16 rpm (signed) */
-#define IG_REG_STATUS 0x0006u  /* Operation+input status @ 0x0006..7 (op-state bits 8..9) */
-#define IG_REG_ALARM 0x00A3u   /* Alarm status (read) */
-#define IG_REG_RUN_ABS 0x00D0u /* Run to absolute position, INT32 (FC16, when stationary) */
-#define IG_REG_RUNSPEED 0x00D8u  /* Running speed, INT32 0.01 rpm (FC16) */
-#define IG_JOG_SPEED_RPM 60u     /* jog speed (bits 14..6 of 0x00CA), 0..511 rpm */
-#define IG_GOTO_MAX_COUNTS 40000 /* bench safety cap on a single run-to-position move */
-#define JOG_PORT UART_NUM_1
-#define JOG_TIMEOUT_MS 500u
-
-static uint8_t s_jog_unit;
-
-/* Build the 0x00CA jog command word. bit15 = direction (0 CW / 1 CCW); bits14..6 = speed (rpm);
- * bit5 = stop method (0 decel / 1 immediate, only relevant on stop); bit0 = 1 run / 0 stop.
- * Manual example: jog 50 rpm CW running = 0x0C81. */
-static uint16_t jog_word(int ccw, unsigned rpm, int run)
-{
-    if (rpm > 511u) {
-        rpm = 511u;
-    }
-    uint16_t v = (uint16_t)(((rpm & 0x1FFu) << 6) | (run ? 1u : 0u));
-    if (ccw) {
-        v |= (uint16_t)(1u << 15);
-    }
-    return v;
-}
-
-/* FC06 write with a logged result. Returns the modbus status so callers can abort on failure. */
-static modbus_status_t jog_write(uint16_t addr, uint16_t val)
-{
-    uint8_t exc = 0;
-    const modbus_status_t st =
-        modbus_master_write_single(JOG_PORT, s_jog_unit, addr, val, JOG_TIMEOUT_MS, &exc);
-    if (st == MODBUS_OK) {
-        ESP_LOGI(TAG, "  write 0x%04X = 0x%04X  OK", (unsigned)addr, (unsigned)val);
-    } else if (st == MODBUS_ERR_EXCEPTION) {
-        ESP_LOGW(TAG, "  write 0x%04X = 0x%04X  exception 0x%02X", (unsigned)addr, (unsigned)val,
-                 (unsigned)exc);
-    } else {
-        ESP_LOGW(TAG, "  write 0x%04X = 0x%04X  FAILED st=%d (no reply / echo mismatch)",
-                 (unsigned)addr, (unsigned)val, (int)st);
-    }
-    return st;
-}
-
-/* FC16 write of a 32-bit value across a register pair, LOW word at addr, HIGH word at addr+1. */
-static modbus_status_t jog_write_s32(uint16_t addr, int32_t val)
-{
-    uint16_t regs[2];
-    regs[0] = (uint16_t)((uint32_t)val & 0xFFFFu);         /* low word at addr */
-    regs[1] = (uint16_t)(((uint32_t)val >> 16) & 0xFFFFu); /* high word at addr+1 */
-    uint8_t exc = 0;
-    const modbus_status_t st =
-        modbus_master_write_multi(JOG_PORT, s_jog_unit, addr, 2, regs, JOG_TIMEOUT_MS, &exc);
-    if (st == MODBUS_OK) {
-        ESP_LOGI(TAG, "  write32 0x%04X = %ld  OK", (unsigned)addr, (long)val);
-    } else {
-        ESP_LOGW(TAG, "  write32 0x%04X = %ld  FAILED st=%d exc=0x%02X", (unsigned)addr, (long)val,
-                 (int)st, (unsigned)exc);
-    }
-    return st;
-}
-
-/* Read a 32-bit value from a register pair, LOW word at addr, HIGH word at addr+1 (the word order
- * this drive uses, confirmed from the manual examples, e.g. 30000 reads back as 75 30 00 00). */
-static int32_t jog_read_s32(uint16_t addr)
-{
-    uint16_t regs[2] = {0, 0};
-    uint8_t exc = 0;
-    const modbus_status_t st =
-        modbus_master_read(JOG_PORT, s_jog_unit, MODBUS_FC_READ_HOLDING_REGISTERS, addr, 2,
-                           JOG_TIMEOUT_MS, regs, &exc);
-    if (st != MODBUS_OK) {
-        return 0;
-    }
-    return (int32_t)(((uint32_t)regs[1] << 16) | (uint32_t)regs[0]);
-}
-
-static uint16_t jog_read_u16(uint16_t addr, modbus_status_t *st_out)
-{
-    uint16_t reg = 0;
-    uint8_t exc = 0;
-    const modbus_status_t st =
-        modbus_master_read(JOG_PORT, s_jog_unit, MODBUS_FC_READ_HOLDING_REGISTERS, addr, 1,
-                           JOG_TIMEOUT_MS, &reg, &exc);
-    if (st_out != NULL) {
-        *st_out = st;
-    }
-    return reg;
-}
-
-static int cmd_mot_read(int argc, char **argv)
-{
-    (void)argc;
-    (void)argv;
-    modbus_status_t st = MODBUS_OK;
-    const uint16_t status = jog_read_u16(IG_REG_STATUS, &st);
-    if (st != MODBUS_OK) {
-        ESP_LOGW(TAG, "mot-read: status read failed st=%d — check bus/baud/unit", (int)st);
-        return 0;
-    }
-    const int32_t pos = jog_read_s32(IG_REG_POS);
-    const int16_t vel = (int16_t)jog_read_u16(IG_REG_SPEED, NULL);
-    modbus_status_t sa = MODBUS_OK;
-    const uint16_t alarm = jog_read_u16(IG_REG_ALARM, &sa);
-    const unsigned opstate = (unsigned)((status >> 8) & 0x3u); /* bits 8..9: 0 idle, 3 running */
-    ESP_LOGI(TAG, "mot-read: status=0x%04X (op=%u) pos=%ld vel=%d rpm alarm=0x%04X",
-             (unsigned)status, opstate, (long)pos, (int)vel, (unsigned)alarm);
-    return 0;
-}
-
-static int cmd_mot_enable(int argc, char **argv)
-{
-    (void)argc;
-    (void)argv;
-    ESP_LOGI(TAG, "mot-enable (0x00D4 = 0)");
-    jog_write(IG_REG_ENABLE, 0x0000u); /* low byte 0 = enable */
-    return 0;
-}
-
-static int cmd_mot_disable(int argc, char **argv)
-{
-    (void)argc;
-    (void)argv;
-    ESP_LOGI(TAG, "mot-disable (jog stop + release 0x00D4 = 1)");
-    jog_write(IG_REG_JOG, jog_word(0, 0, 0)); /* stop any jog */
-    jog_write(IG_REG_ENABLE, 0x0001u);        /* low byte 1 = release motor */
-    return 0;
-}
-
-static int cmd_jog_stop(int argc, char **argv)
-{
-    (void)argc;
-    (void)argv;
-    ESP_LOGW(TAG, "jog-stop");
-    jog_write(IG_REG_JOG, jog_word(0, 0, 0)); /* run bit clear -> decel stop */
-    return 0;
-}
-
-/* Enable -> issue the 0x00CA jog word for a BOUNDED time, polling position/speed -> always STOP. */
-static void jog_run(int ccw, const char *label, int secs)
-{
-    if (secs < 1) {
-        secs = 1;
-    }
-    if (secs > 5) {
-        secs = 5; /* hard cap: a bench jog is brief by design */
-    }
-    ESP_LOGW(TAG, ">>> JOG %s @ %u rpm for %ds — MOTOR WILL MOVE <<<", label,
-             (unsigned)IG_JOG_SPEED_RPM, secs);
-    jog_write(IG_REG_ENABLE,
-              0x0000u); /* ensure enabled (0 = enable); harmless if already enabled */
-    const int32_t pos0 = jog_read_s32(IG_REG_POS);
-    if (jog_write(IG_REG_JOG, jog_word(ccw, IG_JOG_SPEED_RPM, 1)) != MODBUS_OK) {
-        ESP_LOGW(TAG, "jog command failed — stopping");
-        jog_write(IG_REG_JOG, jog_word(0, 0, 0));
-        return;
-    }
-    for (int i = 0; i < secs * 5; ++i) {
-        vTaskDelay(pdMS_TO_TICKS(200));
-        const int32_t pos = jog_read_s32(IG_REG_POS);
-        const int16_t vel = (int16_t)jog_read_u16(IG_REG_SPEED, NULL);
-        ESP_LOGI(TAG, "  [%dms] pos=%ld vel=%d rpm", (i + 1) * 200, (long)pos, (int)vel);
-    }
-    jog_write(IG_REG_JOG, jog_word(0, 0, 0)); /* always stop, even if a poll failed mid-run */
-    const int32_t pos1 = jog_read_s32(IG_REG_POS);
-    ESP_LOGW(TAG, "jog %s done — STOPPED. position %ld -> %ld (delta %ld counts)", label,
-             (long)pos0, (long)pos1, (long)(pos1 - pos0));
-}
-
-static int cmd_jog_fwd(int argc, char **argv)
-{
-    jog_run(0 /* CW */, "FWD", (argc > 1) ? atoi(argv[1]) : 2);
-    return 0;
-}
-
-static int cmd_jog_rev(int argc, char **argv)
-{
-    jog_run(1 /* CCW */, "REV", (argc > 1) ? atoi(argv[1]) : 2);
-    return 0;
-}
-
-/* Profile to an absolute target position (0x00D0, relative to origin) and auto-stop there. The
- * move magnitude is capped for bench safety; the drive ramps + stops itself at the target. */
-static int cmd_goto(int argc, char **argv)
-{
-    if (argc < 2) {
-        ESP_LOGW(TAG, "usage: goto <target_pulses>  (absolute position, relative to origin)");
-        return 0;
-    }
-    const int32_t target = (int32_t)strtol(argv[1], NULL, 0);
-    const int32_t pos0 = jog_read_s32(IG_REG_POS);
-    const int32_t dist = (target > pos0) ? (target - pos0) : (pos0 - target);
-    if (dist > IG_GOTO_MAX_COUNTS) {
-        ESP_LOGW(TAG, "goto refused: move of %ld counts exceeds the %d bench cap (current pos %ld)",
-                 (long)dist, IG_GOTO_MAX_COUNTS, (long)pos0);
-        return 0;
-    }
-    ESP_LOGW(TAG, ">>> GOTO %ld (from %ld, %ld counts) @ %u rpm — MOTOR WILL MOVE <<<",
-             (long)target, (long)pos0, (long)dist, (unsigned)IG_JOG_SPEED_RPM);
-    jog_write(IG_REG_ENABLE, 0x0000u);                               /* enable */
-    jog_write_s32(IG_REG_RUNSPEED, (int32_t)IG_JOG_SPEED_RPM * 100); /* 0.01 rpm units */
-    if (jog_write_s32(IG_REG_RUN_ABS, target) != MODBUS_OK) {
-        ESP_LOGW(TAG, "goto command failed");
-        return 0;
-    }
-    int32_t last = pos0;
-    int stable = 0;
-    for (int i = 0; i < 40; ++i) { /* up to 8 s; the drive auto-stops at the target */
-        vTaskDelay(pdMS_TO_TICKS(200));
-        const int32_t pos = jog_read_s32(IG_REG_POS);
-        ESP_LOGI(TAG, "  [%dms] pos=%ld", (i + 1) * 200, (long)pos);
-        if (pos == last) {
-            if (++stable >= 3) {
-                break; /* settled at rest */
-            }
-        } else {
-            stable = 0;
-        }
-        last = pos;
-    }
-    const int32_t pos1 = jog_read_s32(IG_REG_POS);
-    ESP_LOGW(TAG, "goto done. position %ld -> %ld (target %ld, err %ld counts)", (long)pos0,
-             (long)pos1, (long)target, (long)(target - pos1));
-    return 0;
-}
-
-/* Bench JOG console: RS-485 up, motor idle, REPL on its own task. Does not return. */
-static void run_modbus_jog_console(void)
-{
-    const rs485_config_t cfg = {
-        .port = UART_NUM_1,
-        .tx_gpio = PIN_RS485_TX,
-        .rx_gpio = PIN_RS485_RX,
-        .de_re_gpio = PIN_RS485_DE_RE,
-        .baud_rate = CONFIG_APP_MODBUS_JOG_BAUD,
-        .parity = UART_PARITY_DISABLE,
-        .rx_buffer_size = 256,
-    };
-    ESP_ERROR_CHECK(rs485_init(&cfg));
-    s_jog_unit = (uint8_t)CONFIG_APP_MODBUS_JOG_UNIT;
-    ESP_LOGW(TAG,
-             "JOG console: unit %u @ %d 8N1. Motor is IDLE. Commands: mot-read | mot-enable | "
-             "mot-disable | jog-fwd [s] | jog-rev [s] | jog-stop. SAFETY: motor must be "
-             "secured/unloaded/current-limited.",
-             (unsigned)s_jog_unit, CONFIG_APP_MODBUS_JOG_BAUD);
-
-    esp_console_repl_t *repl = NULL;
-    esp_console_repl_config_t repl_cfg = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
-    repl_cfg.prompt = "jog>";
-    repl_cfg.max_cmdline_length = 100;
-    esp_console_dev_usb_serial_jtag_config_t hw_cfg =
-        ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_cfg, &repl_cfg, &repl));
-
-    const esp_console_cmd_t cmds[] = {
-        {.command = "mot-read",
-         .help = "read drive telemetry (status/pos/vel/alarm) — read-only",
-         .func = cmd_mot_read},
-        {.command = "mot-enable",
-         .help = "enable the drive over RS-485 (FC06)",
-         .func = cmd_mot_enable},
-        {.command = "mot-disable", .help = "stop + de-energize the drive", .func = cmd_mot_disable},
-        {.command = "jog-fwd",
-         .help = "jog forward N sec (1-5, default 2) — MOVES THE MOTOR",
-         .func = cmd_jog_fwd},
-        {.command = "jog-rev",
-         .help = "jog reverse N sec (1-5, default 2) — MOVES THE MOTOR",
-         .func = cmd_jog_rev},
-        {.command = "jog-stop", .help = "stop the motor immediately", .func = cmd_jog_stop},
-        {.command = "goto",
-         .help = "run to absolute position <pulses> (capped move) — MOVES THE MOTOR",
-         .func = cmd_goto},
-    };
-    for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); ++i) {
-        ESP_ERROR_CHECK(esp_console_cmd_register(&cmds[i]));
-    }
-    esp_console_register_help_command();
-    ESP_ERROR_CHECK(esp_console_start_repl(repl)); /* runs on its own task */
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(1000)); /* idle the main task; commands run on the REPL task */
-    }
-}
-#endif /* CONFIG_APP_MODBUS_JOG_CONSOLE */
-
-#if CONFIG_APP_MODBUS_DUMP_ON_BOOT
-/* Read-only register-discovery sweep: FC03 every register in a block, log the non-zero ones plus a
- * readable/zero/exception tally. Reveals a drive's real map when the documented one doesn't match.
- * No writes, no motion. */
-static void dump_range(uint8_t unit, uint16_t lo, uint16_t hi)
-{
-    ESP_LOGI(TAG, "-- range 0x%04X..0x%04X --", (unsigned)lo, (unsigned)hi);
-    int nz = 0, zero = 0, exc = 0, to = 0;
-    for (uint32_t a = lo; a <= (uint32_t)hi; ++a) { /* uint32 counter: no wrap if hi==0xFFFF */
-        uint16_t reg = 0;
-        uint8_t e = 0;
-        const modbus_status_t st = modbus_master_read(
-            UART_NUM_1, unit, MODBUS_FC_READ_HOLDING_REGISTERS, (uint16_t)a, 1, 200, &reg, &e);
-        if (st == MODBUS_OK) {
-            if (reg != 0) {
-                ESP_LOGI(TAG, "  0x%04X = 0x%04X (%u)", (unsigned)a, (unsigned)reg, (unsigned)reg);
-                ++nz;
-            } else {
-                ++zero;
-            }
-        } else if (st == MODBUS_ERR_EXCEPTION) {
-            ++exc;
-        } else {
-            ++to;
-        }
-        vTaskDelay(pdMS_TO_TICKS(5));
-    }
-    ESP_LOGI(TAG, "  [range done] nonzero=%d zero=%d exception=%d timeout=%d", nz, zero, exc, to);
-}
-
-/* Bench register-discovery dump. Sweeps candidate blocks once, then idles. Does not return. */
-static void run_modbus_dump(void)
-{
-    const rs485_config_t cfg = {
-        .port = UART_NUM_1,
-        .tx_gpio = PIN_RS485_TX,
-        .rx_gpio = PIN_RS485_RX,
-        .de_re_gpio = PIN_RS485_DE_RE,
-        .baud_rate = CONFIG_APP_MODBUS_DUMP_BAUD,
-        .parity = UART_PARITY_DISABLE,
-        .rx_buffer_size = 256,
-    };
-    ESP_ERROR_CHECK(rs485_init(&cfg));
-    const uint8_t unit = (uint8_t)CONFIG_APP_MODBUS_DUMP_UNIT;
-    ESP_LOGW(TAG, "=== Modbus register DISCOVERY DUMP: unit %u @ %d 8N1, FC03, read-only ===",
-             (unsigned)unit, CONFIG_APP_MODBUS_DUMP_BAUD);
-
-    /* Candidate blocks: Leadshine Pr-params, telemetry, control region, alarms, CiA402 objects. */
-    static const uint16_t ranges[][2] = {
-        {0x0000, 0x00FF}, {0x0180, 0x01FF}, {0x1000, 0x1050},
-        {0x1800, 0x1810}, {0x2200, 0x2210}, {0x6040, 0x6080},
-    };
-    for (size_t i = 0; i < sizeof(ranges) / sizeof(ranges[0]); ++i) {
-        dump_range(unit, ranges[i][0], ranges[i][1]);
-    }
-    ESP_LOGW(TAG, "=== DUMP COMPLETE — non-zero registers above reveal the drive's real map ===");
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-#endif /* CONFIG_APP_MODBUS_DUMP_ON_BOOT */
-
 /* Arm the Task Watchdog for the field-app task; fed once per cycle + during the sleep (7a). */
 static void field_wdt_arm(void)
 {
@@ -709,14 +342,6 @@ static void load_field_cfg(field_cfg_t *c)
     }
 }
 
-#if CONFIG_APP_LED_HEARTBEAT || CONFIG_APP_FIELD_LED_BLINK
-#include "led_strip.h"
-static led_strip_handle_t led_strip_open(void); /* defined below */
-#endif
-#if CONFIG_APP_FIELD_LED_BLINK
-static void led_blink_once(led_strip_handle_t strip); /* defined below */
-#endif
-
 /*
  * Field application: sample the configured device (real Modbus or simulated) then LoRaWAN-uplink a
  * compact ADR-005 payload, every interval. Config from NVS 'prov' (else Kconfig). Assumes lora is
@@ -756,16 +381,9 @@ static void run_field_app(void)
 #else
     ESP_LOGI(TAG, "light-sleep OFF — busy-wait between samples");
 #endif
-#if CONFIG_APP_FIELD_LED_BLINK
-    led_strip_handle_t field_led = led_strip_open();
-    ESP_LOGI(TAG, "field LED blink ON — WS2812 flashes once per cycle (wake indicator)");
-#endif
 
     for (uint32_t tick = 0;; ++tick) {
         esp_task_wdt_reset();
-#if CONFIG_APP_FIELD_LED_BLINK
-        led_blink_once(field_led); /* visible 'woke up' flash each cycle */
-#endif
         uint8_t buf[PAYLOAD_MAX];
         size_t len = 0;
         uint8_t flags = 0;
@@ -822,10 +440,12 @@ static void run_field_app(void)
     }
 }
 
-#if CONFIG_APP_LED_HEARTBEAT || CONFIG_APP_FIELD_LED_BLINK
+#if CONFIG_APP_LED_HEARTBEAT
 #include "led_strip.h"
-/* Open the onboard WS2812 (GPIO38) via RMT. */
-static led_strip_handle_t led_strip_open(void)
+/* Bench "alive" indicator: breathe the WS2812 (GPIO38), rotating colour so it's clearly
+ * firmware-driven. No LoRa / Modbus / provisioning / sleep — proves the board runs on any supply
+ * (DC1 / USB-C / power bank) without a USB host. Does not return. */
+static void run_led_heartbeat(void)
 {
     const led_strip_config_t scfg = {
         .strip_gpio_num = PIN_WS2812_DIN,
@@ -841,32 +461,6 @@ static led_strip_handle_t led_strip_open(void)
     };
     led_strip_handle_t strip = NULL;
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&scfg, &rcfg, &strip));
-    return strip;
-}
-#endif
-
-#if CONFIG_APP_FIELD_LED_BLINK
-/* One short green flash — per-cycle wake indicator in the field app. */
-static void led_blink_once(led_strip_handle_t strip)
-{
-    if (!strip) {
-        return;
-    }
-    led_strip_set_pixel(strip, 0, 0, 90, 0);
-    led_strip_refresh(strip);
-    vTaskDelay(pdMS_TO_TICKS(120));
-    led_strip_set_pixel(strip, 0, 0, 0, 0);
-    led_strip_refresh(strip);
-}
-#endif
-
-#if CONFIG_APP_LED_HEARTBEAT
-/* Bench "alive" indicator: breathe the WS2812 (GPIO38), rotating colour so it's clearly
- * firmware-driven. No LoRa / Modbus / provisioning / sleep — proves the board runs on any supply
- * (DC1 / USB-C / power bank) without a USB host. Does not return. */
-static void run_led_heartbeat(void)
-{
-    led_strip_handle_t strip = led_strip_open();
     ESP_LOGW(TAG, "LED heartbeat — board ALIVE. Breathing WS2812 (GPIO38); no LoRa/Modbus/sleep.");
 
     static const uint8_t palette[][3] = {
@@ -914,10 +508,6 @@ void app_main(void)
     run_modbus_poll(); /* bench bring-up mode — does not return */
 #elif CONFIG_APP_MODBUS_SCAN_ON_BOOT
     run_modbus_scan(); /* bench bring-up mode — does not return */
-#elif CONFIG_APP_MODBUS_JOG_CONSOLE
-    run_modbus_jog_console(); /* bench motor-jog console — does not return */
-#elif CONFIG_APP_MODBUS_DUMP_ON_BOOT
-    run_modbus_dump(); /* bench register-discovery dump — does not return */
 #endif
 
 #if CONFIG_APP_PROVISIONING_CONSOLE

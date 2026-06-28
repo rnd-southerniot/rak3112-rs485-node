@@ -763,72 +763,9 @@ confirm against LEESN's PC tool over the `COM` USB before trusting addresses):
 - Wiring (read-only safe): IG28ET `485A → CN1 A`, `485B → CN1 B`, motor power-GND `→ CN1 GND`
   (shared reference). Motor on its **own 9–36 V** — never route that into the node.
 - Built `firmware/sdkconfig.defaults.scan-stepper` (scan-on-boot, light-sleep OFF so no USB wedge;
-  probe FC03 `0x0191`, IDs 1–31 × common bauds × {8N1,8E1,8O1}). Sources: Leadshine iEM-RS manual,
-  leesn.com.
-- **BENCH RESULT 2026-06-28 — drive found + read confirmed.** Scan profile flashed; IG28ET wired to
-  CN1 (`485A→pin2`, `485B→pin1`, `GND→pin3`) and powered from its own supply. Scan swept 8E1 (all
-  bauds, 0 devices) then found the drive on **8N1**: `id 1 PRESENT @ 115200 8N1: reg[0x0191]=0x0000`.
-  So the link is **115200 · 8N1 · unit ID 1** (NOT the factory-38400 noted above — confirm/record per
-  drive). Then `firmware/sdkconfig.defaults.poll-stepper` (FC03 reg `0x1003`=4099, 115200 8N1 unit 1,
-  1 Hz) flashed → **rock-steady reads, zero timeouts/exceptions/garbage**: `reg4099 = 0 (0x0000)`
-  every second. Confirms the node's RS-485 master can read the drive (read-only; no control register
-  written, shaft never commanded). **Caveat:** both registers read so far (`0x0191`, `0x1003`) return
-  `0x0000` — communication is proven, but the *specific* map isn't yet, since a drive can ACK reads of
-  unimplemented addresses with zeros. To validate the map, read a register expected NON-zero: actual
-  position `0x1014/0x1015` (hand-turn the shaft if not torque-locked) or a config/ID register
-  (rated-current / microstep / firmware-ID). NOTE: the mid-scan "reboots" seen in the console were just
-  USB-Serial-JTAG reset-on-reopen (`rst:0x15 USB_UART_CHIP_RESET`, reset reason "USB (11)") from the
-  host re-opening the port — benign, not a brownout. Read the console with `dtr=False, rts=False`.
-- **BENCH RESULT 2026-06-28 (cont.) — write/jog attempted, map reverse-engineered, motion BLOCKED on
-  proprietary protocol.** Added FC06 write support (`modbus_build_write_single` / `_parse_` +
-  `modbus_master_write_single`, host-tested) and two bench modes: `APP_MODBUS_JOG_CONSOLE`
-  (`sdkconfig.defaults.jog-stepper`) — a USB-Serial-JTAG REPL (`mot-read` / `mot-enable` /
-  `mot-disable` / `jog-fwd [s]` / `jog-rev [s]` / `jog-stop`), motor idle at boot, each jog bounded
-  1–5 s and auto-stopped; and `APP_MODBUS_DUMP_ON_BOOT` (`sdkconfig.defaults.dump-stepper`) — a
-  read-only FC03 discovery sweep that logs non-zero registers. **Mechanical-safety gate cleared in
-  writing** (motor secured/unloaded/current-limited) before any FC06 write. **JOG result:** all FC06
-  writes were ACKed (drive echoes `0x000F=1`, `0x1801=0x4001`) but the motor was **completely inert** —
-  no motion, and `0x1003/0x1014/0x1046` feedback stayed 0. **Why (discovery dump):** the drive's whole
-  register map is in **`0x0000–0x00FF`** (107 non-zero regs); `0x0180-0x01FF`, `0x1000-0x1050`,
-  `0x1800-0x1810`, `0x2200-0x2210`, AND CiA402 `0x6040-0x6080` are **all zero** → it is NEITHER a
-  Leadshine-PR (`0x1801`) NOR a CiA402 (`0x6040`) drive; the researched iEM-RS map simply doesn't apply.
-  Dump proved real reads: the device spells its identity in ASCII at `0x0049-0x004D` (little-endian per
-  word) = **"IG28ET_485"**; plus a speed ramp `0x002C-0x0033`=100..800, a doubling table
-  `0x0034-0x0042`=400..51200, `0x00C0=3200` (microstep). `0x000F` reads back `0x1000` (not the 1 we
-  wrote → it's config, not an enable latch). **CONCLUSION:** comms + FC03 read + FC06 write all proven;
-  motion needs the **IG28ET-485 proprietary `0x00xx` protocol doc or LEESN's PC config tool** — no
-  public register map found (Leadshine PDF cert expired; StepperOnline 403; LEESN pages = specs only).
-  Blind-writing candidate command registers to a live motor is unsafe (some `0x00xx` regs are config) —
-  STOPPED here per hardware-safety discipline. New firmware (FC06 + jog/dump bench modes + host tests)
-  is on `phase/p7-production-hardening`, default field firmware unaffected.
-- **BENCH RESULT 2026-06-28 (RESOLVED) — manufacturer manual obtained, MOTION CONFIRMED.** Operator
-  supplied the real doc: **LEESN "485 Communication Manual" V126** (Shenzhen Leesn Machinery&Electric).
-  It is a flat `0x00xx` Modbus map (matches the discovery dump exactly) — NOT Leadshine-PR and NOT
-  CiA402. The three earlier guesses were all wrong addresses: (1) jog control is **`0x00CA`** (a
-  self-contained command word), not `0x1801`; (2) `0x000F` is **Encoder Line Count** (default 1000),
-  not enable — the real enable is **`0x00D4`** (low byte 0=enable / 1=release; the drive is also
-  power-on-enabled by default via `0x0012` bit4), so the earlier `0x000F=1` write was harmless (no
-  memory, reads back 4096); (3) feedback lives at **`0x0004-5` position (INT32)**, `0x0019` (= Actual
-  Given Current on FW≥118, NOT speed — use `0x00D6-7` INT32 0.01rpm for speed), status `0x0006-7`
-  (op-state bits 8..9). **32-bit word order is LOW-word-first** (manual ex: 30000 → `75 30 00 00`).
-  **`0x00CA` jog word:** bit15 dir(0 CW/1 CCW), bits14..6 speed(rpm 0..511), bit5 stop-method, bit0
-  run/stop; manual ex jog 50rpm CW = `0x0C81`. Other motion regs for later: `0x00C8` run/stop speed
-  mode (1 fwd / 257 rev / 0 decel-stop / 256 e-stop, speed from `0x009A` or `0x00D8`), `0x00CE/CF`
-  run-N-pulses, `0x00D0/D1` & `0x00E8/E9` run-to-absolute-position, `0x00DC` power-off-save (100k-cycle
-  limit — use sparingly). Retargeted the jog harness to these (`app_main.c`), rebuilt, flashed.
-  **HIL GATE PASS (mechanical-safety re-confirmed in writing):** `jog-fwd 3` @ 60rpm wrote
-  `0x00CA=0x0F01`, the motor PHYSICALLY ROTATED, position climbed 1961→14349 (**delta 12388 counts**
-  over 3s ≈ 1 rev/s), then `0x00CA=0` STOPPED clean and held. Node now reads + writes + MOVES the drive
-  over RS-485. (vel readout still points at `0x0019`=current — cosmetic; swap to `0x00D6` for true rpm.)
-- **BENCH RESULT 2026-06-28 (positioning) — FC16 + run-to-absolute-position, ZERO error.** Added FC16
-  write-multiple to the Modbus layer (`modbus_build_write_multi`/`_parse_` + `modbus_master_write_multi`,
-  host-tested against the manual's golden frame `01 10 00 D0 00 02 04 27 10 00 00 F5 82`) — needed for
-  32-bit writes. New `goto <pulses>` console command: enable → set running speed `0x00D8` (INT32 0.01rpm)
-  → write target to `0x00D0` (INT32 run-to-absolute, FC16) → poll until settled; move magnitude capped
-  at 40000 counts for bench safety; the drive ramps + auto-stops itself at the target. **HIL PASS:**
-  `goto 8000` ramped 1961→8000 (**err 0**), `goto 0` ramped 8000→0 (**err 0**), exact landing + hold
-  each time. Full motion stack proven: FC03 read / FC06 write / FC16 write / jog fwd+rev (`0x00CA`) /
-  absolute positioning (`0x00D0`). All framing host-tested (ctest 3/3). Bench cap + safety gate honored.
+  probe FC03 `0x0191`, IDs 1–31 × common bauds × {8N1,8E1,8O1}). **Not yet flashed/wired** (bench not
+  ready). Next: flash the scan profile → find the drive's address/baud → poll `0x1003`/`0x1014` to
+  validate the map. Sources: Leadshine iEM-RS manual, leesn.com.
 
 **New team tooling this session:** `docs/prompts/add-sensor-from-datasheet.md` (generate a sensor's
 read/sim/payload from a datasheet + proven Arduino code — Arduino is ground-truth for wire details).

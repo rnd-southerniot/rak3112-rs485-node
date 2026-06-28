@@ -17,24 +17,9 @@
 #define MODBUS_FC_READ_HOLDING_REGISTERS 0x03u
 #define MODBUS_FC_READ_INPUT_REGISTERS 0x04u
 
-/* Write function codes (master). FC06 writes one 16-bit holding register; FC16 writes several
- * consecutive registers in one transaction (needed for 32-bit values across a register pair). */
-#define MODBUS_FC_WRITE_SINGLE_REGISTER 0x06u
-#define MODBUS_FC_WRITE_MULTIPLE_REGISTERS 0x10u
-
-/* FC16 request = 7-byte header (slave,func,addr_hi,addr_lo,qty_hi,qty_lo,bytecount) + 2*qty data
- * + 2 CRC. Its normal response is 8 bytes (slave,func,addr_hi,addr_lo,qty_hi,qty_lo,crc_lo,crc_hi).
- */
-#define MODBUS_WRITE_MULTI_RESP_LEN 8u
-#define MODBUS_MAX_WRITE_REGS 123u
-
 /* A read-registers request ADU is always 8 bytes: slave, func, addr_hi, addr_lo, qty_hi,
  * qty_lo, crc_lo, crc_hi. */
 #define MODBUS_READ_REQ_LEN 8u
-
-/* A write-single-register request — and its normal response — is 8 bytes: slave, func,
- * addr_hi, addr_lo, val_hi, val_lo, crc_lo, crc_hi. The slave echoes the request verbatim. */
-#define MODBUS_WRITE_SINGLE_LEN 8u
 
 /* Max registers per FC03/FC04 read (2 bytes each → 250 data bytes, fits the 256-byte RTU ADU). */
 #define MODBUS_MAX_READ_REGS 125u
@@ -69,43 +54,6 @@ size_t modbus_build_read(uint8_t *out, uint8_t slave, uint8_t func, uint16_t sta
 modbus_status_t modbus_parse_read_response(const uint8_t *adu, size_t len, uint8_t expect_slave,
                                            uint8_t expect_func, uint16_t expect_qty,
                                            uint16_t *regs_out, uint8_t *exception_out);
-
-/*
- * Build a write-single-register (FC06) request into `out` (must hold MODBUS_WRITE_SINGLE_LEN
- * bytes). CRC appended low byte first. Returns MODBUS_WRITE_SINGLE_LEN, or 0 on a null pointer.
- * NOTE: FC06 writes a device register — on a motor drive this can COMMAND MOTION. Callers must
- * gate that with hardware-safety checks; the framing layer itself is value-agnostic.
- */
-size_t modbus_build_write_single(uint8_t *out, uint8_t slave, uint16_t addr, uint16_t value);
-
-/*
- * Parse a write-single-register (FC06) response ADU. A normal response echoes the request, so
- * this validates length, CRC, slave, function, and that the echoed addr/value match what was
- * requested. Decodes an exception (0x86) into *exception_out returning MODBUS_ERR_EXCEPTION.
- * An addr/value echo mismatch returns MODBUS_ERR_BYTECOUNT.
- */
-modbus_status_t modbus_parse_write_single_response(const uint8_t *adu, size_t len,
-                                                   uint8_t expect_slave, uint16_t expect_addr,
-                                                   uint16_t expect_value, uint8_t *exception_out);
-
-/*
- * Build a write-multiple-registers (FC16) request into `out` (capacity `out_cap`). Writes `qty`
- * registers from `regs[0..qty-1]` to consecutive addresses starting at `addr`. Returns the total
- * frame length (9 + 2*qty), or 0 on bad args / insufficient capacity. Each register goes on the
- * wire big-endian (hi byte first); CRC low byte first.
- * NOTE: like FC06, this can COMMAND MOTION on a drive — gate with hardware-safety checks.
- */
-size_t modbus_build_write_multi(uint8_t *out, size_t out_cap, uint8_t slave, uint16_t addr,
-                                uint16_t qty, const uint16_t *regs);
-
-/*
- * Parse a write-multiple-registers (FC16) response (echoes addr + qty, 8 bytes). Validates length,
- * CRC, slave, function, and that the echoed addr/qty match. Exception (0x90) -> *exception_out and
- * MODBUS_ERR_EXCEPTION; addr/qty echo mismatch -> MODBUS_ERR_BYTECOUNT.
- */
-modbus_status_t modbus_parse_write_multi_response(const uint8_t *adu, size_t len,
-                                                  uint8_t expect_slave, uint16_t expect_addr,
-                                                  uint16_t expect_qty, uint8_t *exception_out);
 
 /*
  * Word order for a 32-bit value spread across two consecutive Modbus registers. `regs[0]` is the

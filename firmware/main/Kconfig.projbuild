@@ -94,59 +94,6 @@ config APP_MODBUS_POLL_FLOAT_CDAB
         Set CDAB only if the reading looks like garbage (wrong word order on some PLCs/meters).
 
 # ---------------------------------------------------------------------------
-# Bench: console-driven JOG of a Modbus motor drive (LEESN IG28ET / Leadshine iEM-RS).
-# COMMANDS MOTION via FC06 writes — only ever run with the motor mechanically safe
-# (secured, shaft unloaded, current-limited). Motion happens only on a typed command;
-# the board boots idle. Read-only telemetry (mot-read) is always available.
-# ---------------------------------------------------------------------------
-
-config APP_MODBUS_JOG_CONSOLE
-    bool "Bench: console JOG of a Modbus stepper drive (MOVES THE MOTOR)"
-    default n
-    help
-        Bring-up tool for a Modbus motor drive (IG28ET, Leadshine iEM-RS map). Boots idle, brings up
-        RS-485, and starts a USB-Serial-JTAG REPL with: mot-read (telemetry — status/position/velocity/
-        alarm, read-only), mot-enable / mot-disable (FC06 write the RS-485-enable register), jog-fwd
-        [s] / jog-rev [s] (enable, drive the control word for a BOUNDED 1-5 s, poll position, then auto-
-        STOP), and jog-stop (immediate stop). The shaft only turns while a jog command runs. NEVER set
-        for field firmware. Use ONLY behind a mechanical-safety gate (motor secured, unloaded,
-        current-limited). Does NOT join LoRaWAN.
-
-config APP_MODBUS_JOG_UNIT
-    int "JOG: Modbus unit ID"
-    depends on APP_MODBUS_JOG_CONSOLE
-    range 1 247
-    default 1
-
-config APP_MODBUS_JOG_BAUD
-    int "JOG: Modbus baud rate"
-    depends on APP_MODBUS_JOG_CONSOLE
-    default 115200
-    help
-        IG28ET on the bench answered at 115200 8N1, unit 1 (discovered by the scan profile).
-
-config APP_MODBUS_DUMP_ON_BOOT
-    bool "Bench: read-only Modbus register discovery dump (find non-zero regs)"
-    default n
-    help
-        Reverse-engineering aid. Sweeps FC03 reads across candidate holding-register blocks
-        (Pr-params 0x0000-0x00FF, 0x0180-0x01FF, telemetry 0x1000-0x1050, control 0x1800-0x1810,
-        alarms 0x2200-0x2210, CiA402 0x6040-0x6080) and logs every NON-ZERO register plus a per-range
-        readable/zero/exception tally. Read-only (no FC06, no motion) — used to discover a Modbus
-        drive's real register map when the documented map doesn't match. Does NOT join LoRaWAN.
-
-config APP_MODBUS_DUMP_UNIT
-    int "DUMP: Modbus unit ID"
-    depends on APP_MODBUS_DUMP_ON_BOOT
-    range 1 247
-    default 1
-
-config APP_MODBUS_DUMP_BAUD
-    int "DUMP: Modbus baud rate"
-    depends on APP_MODBUS_DUMP_ON_BOOT
-    default 115200
-
-# ---------------------------------------------------------------------------
 # Field application (Phase 6c): sample a device -> encode -> LoRaWAN uplink.
 # This is the NORMAL firmware path (when neither scan nor poll bench mode is set).
 # ---------------------------------------------------------------------------
@@ -287,15 +234,5 @@ config APP_LED_HEARTBEAT
         nothing else — no LoRaWAN, no Modbus, no provisioning, no light-sleep. Use it to confirm the
         board is powered and running from ANY supply (DC1 barrel / USB-C / power bank) WITHOUT a USB
         host: a visible colour pulse = alive. Leave OFF for field firmware.
-
-config APP_FIELD_LED_BLINK
-    bool "Field: flash the WS2812 once per sample cycle (visible wake indicator)"
-    default n
-    help
-        In the field app, flash the onboard WS2812 (GPIO38) briefly at the start of each
-        sample/uplink cycle. Pairs with light-sleep (Phase 7b): a flash every interval on an external
-        supply = the node is WAKING and cycling (no host/console needed); one flash then dark = it
-        hung in light-sleep. Adds a tiny per-cycle current blip — turn OFF for the clean average-
-        current measurement.
 
 endmenu

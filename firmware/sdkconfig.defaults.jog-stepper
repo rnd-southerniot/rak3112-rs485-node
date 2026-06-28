@@ -1,9 +1,0 @@
-# Bench overlay: console-driven JOG of the LEESN IG28ET stepper drive over RS-485 (CN1).
-# MOVES THE MOTOR (FC06 writes). Boots IDLE; the shaft turns only on a typed jog command,
-# each bounded to 1-5 s and auto-stopped. Link params from the scan: 115200 8N1, unit 1.
-# Use ONLY with the motor mechanically safe (secured, unloaded, current-limited).
-# Commands over the USB-Serial-JTAG console: mot-read / mot-enable / mot-disable /
-# jog-fwd [s] / jog-rev [s] / jog-stop.
-CONFIG_APP_MODBUS_JOG_CONSOLE=y
-CONFIG_APP_MODBUS_JOG_UNIT=1
-CONFIG_APP_MODBUS_JOG_BAUD=115200

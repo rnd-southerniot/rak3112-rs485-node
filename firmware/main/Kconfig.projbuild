@@ -222,4 +222,17 @@ config APP_DEBUG_OTA_BAD
         activating it via OTA leaves it PENDING_VERIFY; on the post-crash reboot the bootloader
         rolls back to the previous good slot. NEVER ship with this set.
 
+# ---------------------------------------------------------------------------
+# Bench: WS2812 "alive" heartbeat (power bring-up aid).
+# ---------------------------------------------------------------------------
+
+config APP_LED_HEARTBEAT
+    bool "Bench: WS2812 'alive' heartbeat (skip LoRa/Modbus/sleep)"
+    default n
+    help
+        Standalone bench mode: drives the onboard WS2812 (GPIO38) as a breathing heartbeat and does
+        nothing else — no LoRaWAN, no Modbus, no provisioning, no light-sleep. Use it to confirm the
+        board is powered and running from ANY supply (DC1 barrel / USB-C / power bank) WITHOUT a USB
+        host: a visible colour pulse = alive. Leave OFF for field firmware.
+
 endmenu

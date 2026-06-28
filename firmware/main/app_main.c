@@ -440,6 +440,54 @@ static void run_field_app(void)
     }
 }
 
+#if CONFIG_APP_LED_HEARTBEAT
+#include "led_strip.h"
+/* Bench "alive" indicator: breathe the WS2812 (GPIO38), rotating colour so it's clearly
+ * firmware-driven. No LoRa / Modbus / provisioning / sleep — proves the board runs on any supply
+ * (DC1 / USB-C / power bank) without a USB host. Does not return. */
+static void run_led_heartbeat(void)
+{
+    const led_strip_config_t scfg = {
+        .strip_gpio_num = PIN_WS2812_DIN,
+        .max_leds = 1,
+        .led_pixel_format = LED_PIXEL_FORMAT_GRB,
+        .led_model = LED_MODEL_WS2812,
+        .flags = {.invert_out = false},
+    };
+    const led_strip_rmt_config_t rcfg = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 10 * 1000 * 1000, /* 10 MHz */
+        .flags = {.with_dma = false},
+    };
+    led_strip_handle_t strip = NULL;
+    ESP_ERROR_CHECK(led_strip_new_rmt_device(&scfg, &rcfg, &strip));
+    ESP_LOGW(TAG, "LED heartbeat — board ALIVE. Breathing WS2812 (GPIO38); no LoRa/Modbus/sleep.");
+
+    static const uint8_t palette[][3] = {
+        {0, 1, 0}, {0, 1, 1}, {0, 0, 1},
+        {1, 0, 1}, {1, 1, 0}, /* green, cyan, blue, magenta, yellow */
+    };
+    const int n = sizeof(palette) / sizeof(palette[0]);
+    const int peak = 80; /* WS2812 is bright — keep moderate */
+    for (uint32_t i = 0;; ++i) {
+        const uint8_t *c = palette[i % n];
+        for (int b = 0; b <= peak; ++b) {
+            led_strip_set_pixel(strip, 0, (uint32_t)(c[0] * b), (uint32_t)(c[1] * b),
+                                (uint32_t)(c[2] * b));
+            led_strip_refresh(strip);
+            vTaskDelay(pdMS_TO_TICKS(9));
+        }
+        for (int b = peak; b >= 0; --b) {
+            led_strip_set_pixel(strip, 0, (uint32_t)(c[0] * b), (uint32_t)(c[1] * b),
+                                (uint32_t)(c[2] * b));
+            led_strip_refresh(strip);
+            vTaskDelay(pdMS_TO_TICKS(9));
+        }
+        vTaskDelay(pdMS_TO_TICKS(140));
+    }
+}
+#endif /* CONFIG_APP_LED_HEARTBEAT */
+
 void app_main(void)
 {
 #if CONFIG_APP_DEBUG_OTA_BAD
@@ -451,6 +499,10 @@ void app_main(void)
     log_boot_diagnostics();
     ota_log_boot();
     ota_mark_valid(); /* booted into app code → healthy; cancel any pending rollback */
+
+#if CONFIG_APP_LED_HEARTBEAT
+    run_led_heartbeat(); /* bench: breathe the WS2812 forever; does not return */
+#endif
 
 #if CONFIG_APP_MODBUS_POLL_ON_BOOT
     run_modbus_poll(); /* bench bring-up mode — does not return */

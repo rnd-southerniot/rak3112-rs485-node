@@ -2,3 +2,4 @@
 dependencies:
   idf: ">=5.5.0"
   jgromes/radiolib: "==7.7.1"
+  espressif/led_strip: "~2.5.5" # WS2812 driver (bench LED heartbeat, Phase 7 power bring-up)

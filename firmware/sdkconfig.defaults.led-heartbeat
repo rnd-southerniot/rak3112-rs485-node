@@ -1,0 +1,5 @@
+# Bench profile: WS2812 "alive" heartbeat — confirm the board powers from ANY supply (DC1 barrel /
+# USB-C / power bank) with no USB host. Drives GPIO38 only; no LoRa/Modbus/provisioning/sleep.
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.led-heartbeat" build flash
+# Flash once over USB, then run the board on the external supply — a breathing colour pulse = alive.
+CONFIG_APP_LED_HEARTBEAT=y

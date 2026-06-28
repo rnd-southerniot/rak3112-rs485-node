@@ -748,24 +748,13 @@ board's shunt, run. **Parked because:** bench not ready + the INA238 is in use o
 The **light-sleep-ON** image is currently on the rak board → USB is wedge-prone; if `esptool` can't
 connect, recover via **plug-in-while-holding-SW2(BOOT)** → download mode → reflash.
 
-**Stepper side-quest (LEESN IG28ET — read its registers over RS-485).** The node's RS-485 Modbus
-master can read this drive. Researched map = **Leadshine iEM-RS convention** (the IG-series clones it;
-confirm against LEESN's PC tool over the `COM` USB before trusting addresses):
-- Comms: Modbus RTU, **FC03** read / FC06 write-one / FC10 write-multi, holding registers only,
-  **Slave ID default 1** (DIP), baud 9600/19200/38400/115200 (factory **38400**), parity configurable,
-  CRC-16 low-first, 32-bit values = high+low 16-bit register pair.
-- Read telemetry: `0x1003` motion-state bits, `0x1014/0x1015` feedback position (pulses),
-  `0x1012/0x1013` profile position, `0x1010/0x1011` following error, `0x1046/0x1047` feedback
-  velocity (rpm), `0x1044/0x1045` profile velocity, `0x2203` current-alarm code, `0x0191` peak
-  current (0.1 A).
-- Write (**moves the shaft** — keep unloaded): `0x000F` Pr0.07=1 enable-via-RS485; `0x1801` control
-  word (JOG `0x4001/0x4002`, reset-alarm `0x1111`, save-EEPROM `0x2211`).
-- Wiring (read-only safe): IG28ET `485A → CN1 A`, `485B → CN1 B`, motor power-GND `→ CN1 GND`
-  (shared reference). Motor on its **own 9–36 V** — never route that into the node.
-- Built `firmware/sdkconfig.defaults.scan-stepper` (scan-on-boot, light-sleep OFF so no USB wedge;
-  probe FC03 `0x0191`, IDs 1–31 × common bauds × {8N1,8E1,8O1}). **Not yet flashed/wired** (bench not
-  ready). Next: flash the scan profile → find the drive's address/baud → poll `0x1003`/`0x1014` to
-  validate the map. Sources: Leadshine iEM-RS manual, leesn.com.
+**Stepper motion control — MOVED OUT (2026-06-28).** The LEESN IG28ET stepper *motion control* work
+(Modbus FC06/FC16 writes, jog/goto/dump bench console, and the decoded LEESN register map) now lives
+in its own repo — **`rnd-southerniot/leesn-stepper-control`**. This repo (`rak3112-rs485-node`) is
+**RS-485 sensor *reading* only** (FC03/FC04 for meters/sensors → LoRaWAN); the write/motion code was
+reverted out (revert of `f6afb2e`). Do **not** add motor-write/jog code back here — extend the
+motion-control repo instead. The shared Modbus framing was *copied* (not linked); port any framing fix
+across both.
 
 **New team tooling this session:** `docs/prompts/add-sensor-from-datasheet.md` (generate a sensor's
 read/sim/payload from a datasheet + proven Arduino code — Arduino is ground-truth for wire details).

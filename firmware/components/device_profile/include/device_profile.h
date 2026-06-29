@@ -9,6 +9,7 @@
 #ifndef DEVICE_PROFILE_H
 #define DEVICE_PROFILE_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -94,5 +95,41 @@ float dp_decode(const uint16_t *regs, dp_dtype_t type, dp_word_t word, float sca
  */
 size_t dp_encode_payload(const device_profile_t *profile, const float *values, uint8_t flags,
                          uint8_t *out, size_t cap);
+
+/* ---------------------------------------------------------------------------
+ * NVS profile blob (ADR-006 increment 2): a versioned, CRC-checked, endianness-
+ * independent serialization of a device_profile_t. The CRM serializes a profile and pushes the
+ * blob to the node (prov-profile console); the node deserializes it from NVS into backing storage.
+ * ------------------------------------------------------------------------- */
+
+#define DP_BLOB_VERSION 1u
+#define DP_MAX_MEAS 40u /* worst case today = DSE (21); generous headroom */
+#define DP_MAX_FIELDS 40u
+
+/* Fixed blob layout sizes (big-endian, CRC-16/MODBUS trailer). */
+#define DP_BLOB_HEADER 18u   /* version..n_fields */
+#define DP_BLOB_MEAS_REC 13u /* reg(2) fc(1) type(1) word(1) scale(4) offset(4) */
+#define DP_BLOB_FIELD_REC 7u /* value_index(1) offset(1) enc(1) scale(4) */
+#define DP_BLOB_CRC 2u
+
+/* Backing storage for a deserialized profile (the device_profile_t points into these arrays). */
+typedef struct {
+    device_profile_t profile;
+    dp_measurand_t meas[DP_MAX_MEAS];
+    dp_field_t fields[DP_MAX_FIELDS];
+} dp_profile_storage_t;
+
+/* Byte length of the blob for a profile (or 0 if it exceeds DP_MAX_* bounds). */
+size_t dp_blob_size(const device_profile_t *p);
+
+/* Serialize `p` into `out`. Returns the blob length, or 0 on bad args / cap too small / bounds. */
+size_t dp_serialize(const device_profile_t *p, uint8_t *out, size_t cap);
+
+/*
+ * Deserialize a blob into `store` (fills store->meas/fields and points store->profile at them).
+ * Validates version, length, counts (<= DP_MAX_*), and the CRC. Returns true on success; on any
+ * failure returns false and `store` must not be used.
+ */
+bool dp_deserialize(const uint8_t *blob, size_t len, dp_profile_storage_t *store);
 
 #endif /* DEVICE_PROFILE_H */

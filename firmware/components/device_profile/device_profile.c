@@ -201,3 +201,176 @@ size_t dp_encode_payload(const device_profile_t *profile, const float *values, u
     }
     return total;
 }
+
+/* ----------------------------------------------------------------- NVS blob */
+
+/* CRC-16/MODBUS (poly 0xA001) — local copy so the pure core stays self-contained. */
+static uint16_t dp_crc16(const uint8_t *data, size_t len)
+{
+    uint16_t crc = 0xFFFFu;
+    for (size_t i = 0; i < len; ++i) {
+        crc ^= (uint16_t)data[i];
+        for (int b = 0; b < 8; ++b) {
+            crc = (crc & 1u) ? (uint16_t)((crc >> 1) ^ 0xA001u) : (uint16_t)(crc >> 1);
+        }
+    }
+    return crc;
+}
+
+static void put_be16(uint8_t *p, uint16_t v)
+{
+    p[0] = (uint8_t)(v >> 8);
+    p[1] = (uint8_t)v;
+}
+
+static uint16_t get_be16(const uint8_t *p)
+{
+    return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
+}
+
+static void put_be32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v >> 24);
+    p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);
+    p[3] = (uint8_t)v;
+}
+
+static uint32_t get_be32(const uint8_t *p)
+{
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+/* float <-> big-endian 4 bytes, endianness-independent (via the bit pattern). */
+static void put_be_f32(uint8_t *p, float f)
+{
+    uint32_t bits;
+    memcpy(&bits, &f, sizeof(bits));
+    put_be32(p, bits);
+}
+
+static float get_be_f32(const uint8_t *p)
+{
+    const uint32_t bits = get_be32(p);
+    float f;
+    memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+size_t dp_blob_size(const device_profile_t *p)
+{
+    if (p == NULL || p->n_meas > DP_MAX_MEAS || p->n_fields > DP_MAX_FIELDS) {
+        return 0u;
+    }
+    return DP_BLOB_HEADER + (size_t)p->n_meas * DP_BLOB_MEAS_REC +
+           (size_t)p->n_fields * DP_BLOB_FIELD_REC + DP_BLOB_CRC;
+}
+
+size_t dp_serialize(const device_profile_t *p, uint8_t *out, size_t cap)
+{
+    const size_t total = dp_blob_size(p);
+    if (total == 0u || out == NULL || cap < total) {
+        return 0u;
+    }
+    size_t o = 0;
+    out[o++] = DP_BLOB_VERSION;
+    out[o++] = p->device_byte;
+    put_be32(&out[o], p->baud);
+    o += 4;
+    out[o++] = (uint8_t)p->parity;
+    out[o++] = p->stop_bits;
+    out[o++] = p->default_fc;
+    out[o++] = (uint8_t)p->default_word;
+    out[o++] = p->scan_fc;
+    put_be16(&out[o], p->scan_reg);
+    o += 2;
+    put_be16(&out[o], p->scan_qty);
+    o += 2;
+    out[o++] = p->total_len;
+    out[o++] = p->n_meas;
+    out[o++] = p->n_fields;
+
+    for (uint8_t i = 0; i < p->n_meas; ++i) {
+        const dp_measurand_t *m = &p->meas[i];
+        put_be16(&out[o], m->reg);
+        o += 2;
+        out[o++] = m->fc;
+        out[o++] = (uint8_t)m->type;
+        out[o++] = (uint8_t)m->word;
+        put_be_f32(&out[o], m->scale);
+        o += 4;
+        put_be_f32(&out[o], m->offset);
+        o += 4;
+    }
+    for (uint8_t i = 0; i < p->n_fields; ++i) {
+        const dp_field_t *f = &p->fields[i];
+        out[o++] = f->value_index;
+        out[o++] = f->offset;
+        out[o++] = (uint8_t)f->enc;
+        put_be_f32(&out[o], f->scale);
+        o += 4;
+    }
+    put_be16(&out[o], dp_crc16(out, o)); /* CRC over everything before the trailer */
+    o += 2;
+    return o;
+}
+
+bool dp_deserialize(const uint8_t *blob, size_t len, dp_profile_storage_t *store)
+{
+    if (blob == NULL || store == NULL || len < DP_BLOB_HEADER + DP_BLOB_CRC) {
+        return false;
+    }
+    if (blob[0] != DP_BLOB_VERSION) {
+        return false;
+    }
+    const uint8_t n_meas = blob[16];
+    const uint8_t n_fields = blob[17];
+    if (n_meas > DP_MAX_MEAS || n_fields > DP_MAX_FIELDS) {
+        return false;
+    }
+    const size_t expect = DP_BLOB_HEADER + (size_t)n_meas * DP_BLOB_MEAS_REC +
+                          (size_t)n_fields * DP_BLOB_FIELD_REC + DP_BLOB_CRC;
+    if (len != expect) {
+        return false;
+    }
+    if (dp_crc16(blob, len - DP_BLOB_CRC) != get_be16(&blob[len - DP_BLOB_CRC])) {
+        return false;
+    }
+
+    device_profile_t *p = &store->profile;
+    p->device_byte = blob[1];
+    p->baud = get_be32(&blob[2]);
+    p->parity = (char)blob[6];
+    p->stop_bits = blob[7];
+    p->default_fc = blob[8];
+    p->default_word = (dp_word_t)blob[9];
+    p->scan_fc = blob[10];
+    p->scan_reg = get_be16(&blob[11]);
+    p->scan_qty = get_be16(&blob[13]);
+    p->total_len = blob[15];
+    p->n_meas = n_meas;
+    p->n_fields = n_fields;
+
+    size_t o = DP_BLOB_HEADER;
+    for (uint8_t i = 0; i < n_meas; ++i) {
+        store->meas[i].reg = get_be16(&blob[o]);
+        o += 2;
+        store->meas[i].fc = blob[o++];
+        store->meas[i].type = (dp_dtype_t)blob[o++];
+        store->meas[i].word = (dp_word_t)blob[o++];
+        store->meas[i].scale = get_be_f32(&blob[o]);
+        o += 4;
+        store->meas[i].offset = get_be_f32(&blob[o]);
+        o += 4;
+    }
+    for (uint8_t i = 0; i < n_fields; ++i) {
+        store->fields[i].value_index = blob[o++];
+        store->fields[i].offset = blob[o++];
+        store->fields[i].enc = (dp_enc_t)blob[o++];
+        store->fields[i].scale = get_be_f32(&blob[o]);
+        o += 4;
+    }
+    p->meas = store->meas;
+    p->fields = store->fields;
+    return true;
+}

@@ -128,12 +128,68 @@ static void test_encode_payload(void)
     CHECK(dp_encode_payload(&PROFILE, values, 0, out, 16u) == 0u);
 }
 
+static void test_blob_roundtrip(void)
+{
+    uint8_t blob[512] = {0};
+    const size_t want =
+        DP_BLOB_HEADER + 6u * DP_BLOB_MEAS_REC + 6u * DP_BLOB_FIELD_REC + DP_BLOB_CRC;
+    CHECK(dp_blob_size(&PROFILE) == want);
+
+    const size_t n = dp_serialize(&PROFILE, blob, sizeof(blob));
+    CHECK(n == want);
+
+    dp_profile_storage_t store;
+    CHECK(dp_deserialize(blob, n, &store));
+    const device_profile_t *q = &store.profile;
+    CHECK(q->device_byte == 0x01 && q->baud == 9600 && q->parity == 'N' && q->stop_bits == 1);
+    CHECK(q->default_fc == 4 && q->default_word == DP_CDAB);
+    CHECK(q->scan_fc == 3 && q->scan_reg == 6 && q->scan_qty == 1);
+    CHECK(q->total_len == 17 && q->n_meas == 6 && q->n_fields == 6);
+    /* measurand + field tables survive intact */
+    CHECK(q->meas[5].reg == 58 && q->meas[5].type == DP_F32 && q->meas[5].word == DP_CDAB);
+    CHECK(q->fields[5].value_index == 5 && q->fields[5].offset == 10 &&
+          q->fields[5].enc == DP_ENC_U32 && approx(q->fields[5].scale, 100.0f));
+
+    /* The deserialized profile encodes the same bytes as the original (end-to-end). */
+    const float values[6] = {230.4f, 231.0f, 229.8f, 5.0f, 50.0f, 1000.0f};
+    uint8_t a[64] = {0}, b[64] = {0};
+    const size_t la = dp_encode_payload(&PROFILE, values, 0, a, sizeof(a));
+    const size_t lb = dp_encode_payload(q, values, 0, b, sizeof(b));
+    CHECK(la == lb && la > 0 && memcmp(a, b, la) == 0);
+}
+
+static void test_blob_rejects(void)
+{
+    uint8_t blob[512] = {0};
+    const size_t n = dp_serialize(&PROFILE, blob, sizeof(blob));
+    dp_profile_storage_t store;
+
+    /* CRC corruption rejected. */
+    uint8_t bad[512];
+    memcpy(bad, blob, n);
+    bad[20] ^= 0xFFu;
+    CHECK(!dp_deserialize(bad, n, &store));
+
+    /* Wrong version rejected. */
+    memcpy(bad, blob, n);
+    bad[0] = 0x99u;
+    CHECK(!dp_deserialize(bad, n, &store));
+
+    /* Truncated length rejected. */
+    CHECK(!dp_deserialize(blob, n - 1u, &store));
+
+    /* Serialize rejects a too-small buffer. */
+    CHECK(dp_serialize(&PROFILE, blob, n - 1u) == 0u);
+}
+
 int main(void)
 {
     test_dtype_regs();
     test_decode_16();
     test_decode_32_word_orders();
     test_encode_payload();
+    test_blob_roundtrip();
+    test_blob_rejects();
     printf("device_profile: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

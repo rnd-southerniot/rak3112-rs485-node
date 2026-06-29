@@ -6,6 +6,7 @@
 #include "telemetry.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int g_failures = 0;
@@ -182,6 +183,32 @@ static void test_blob_rejects(void)
     CHECK(dp_serialize(&PROFILE, blob, n - 1u) == 0u);
 }
 
+/* Cross-language check: this is the exact output of
+ *   device-profiles/profile_to_blob.py --ctest-vector
+ * for the identical PROFILE above. If the C serializer and the Python writer ever diverge, this
+ * fails — binding the CRM's blob generator to the firmware's deserializer. */
+static const char EXPECTED_HEX[] =
+    "0101000025804e010401030006000111060600000404013f8000000000000000020404013f80000000000000000404"
+    "04013f80000000000000002c0404013f8000000000000000380404013f80000000000000003a0404013f8000000000"
+    "00000000024120000001020241200000020402412000000306034120000004080242c80000050a0442c80000151e";
+
+static void test_blob_matches_python(void)
+{
+    uint8_t blob[256] = {0};
+    const size_t n = dp_serialize(&PROFILE, blob, sizeof(blob));
+    const size_t hexlen = sizeof(EXPECTED_HEX) - 1; /* drop NUL */
+    CHECK(n * 2u == hexlen);
+    int mismatch = 0;
+    for (size_t i = 0; i < n; ++i) {
+        char hh[3] = {EXPECTED_HEX[2 * i], EXPECTED_HEX[2 * i + 1], 0};
+        const unsigned exp = (unsigned)strtoul(hh, NULL, 16);
+        if (blob[i] != (uint8_t)exp) {
+            mismatch = 1;
+        }
+    }
+    CHECK(mismatch == 0);
+}
+
 int main(void)
 {
     test_dtype_regs();
@@ -190,6 +217,7 @@ int main(void)
     test_encode_payload();
     test_blob_roundtrip();
     test_blob_rejects();
+    test_blob_matches_python();
     printf("device_profile: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

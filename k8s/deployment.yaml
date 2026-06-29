@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: firmware-service
+  namespace: firmware
+  labels: { app: firmware-service }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: firmware-service }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: { app: firmware-service }
+    spec:
+      containers:
+        - name: firmware-service
+          # Image tag = the pinned firmware git tag (D-06: build-once per tag).
+          # [ASSUMED] Docker Hub repo confirmed in Plan 07 user_setup.
+          image: fahim0173/rak3112-firmware-service:phase-6-modbus-green
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8000 }
+          envFrom:
+            - secretRef: { name: firmware-service-env }
+          # tcpSocket probe: /v1/sensors is bearer-guarded — httpGet would 401.
+          # Plan 05 can add an unauthenticated /healthz to switch to httpGet.
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "200m", memory: "256Mi" }

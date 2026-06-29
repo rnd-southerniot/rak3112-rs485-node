@@ -1,0 +1,14 @@
+# D6 (private-only): ClusterIP only — in-cluster access exclusively.
+# In-cluster DNS: firmware-service.firmware.svc.cluster.local:8000
+# No public exposure of any kind (see CONTEXT.md D6).
+apiVersion: v1
+kind: Service
+metadata:
+  name: firmware-service
+  namespace: firmware
+  labels: { app: firmware-service }
+spec:
+  type: ClusterIP
+  selector: { app: firmware-service }
+  ports:
+    - { name: http, port: 8000, targetPort: 8000 }

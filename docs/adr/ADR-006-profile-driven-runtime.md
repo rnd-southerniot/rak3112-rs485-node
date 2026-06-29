@@ -1,6 +1,6 @@
 # ADR-006 — Profile-driven runtime (generic Modbus reader + scan-for-ID)
 
-- **Status:** Proposed (increments 1 + 2 implemented host/compile-verified; 3–5 gated, need bench)
+- **Status:** Proposed (increments 1 + 2 host-verified; **increment 3 HW-validated on real MFM384**; 4–5 gated)
 - **Date:** 2026-06-24
 - **Relates to:** `device-profiles/` (the profile library), ADR-005 (payload schema),
   `docs/PROVISIONING_API_CONTRACT.md` (NVS plane), `docs/CRM_FIRMWARE_AGENT_GUIDE.md`
@@ -48,7 +48,7 @@ Numeric model (the pure core, this increment):
 |---|---|---|
 | 1 ✅ | **Pure core** `components/device_profile` (`dp_decode`/`dp_encode_payload`) + host tests | done — host ctest green; KATs per type/word-order + full-frame encode matches Phase 6c MFM384 bytes |
 | 2 ✅ | NVS profile blob codec (`dp_serialize`/`dp_deserialize`, versioned+CRC) + `prov-profile` console + `profile_store` (NVS) + `device-profiles/profile_to_blob.py` (CRM writer) | done — host ctest (round-trip + rejects + **C↔Python byte-identical cross-check**); on-target build green. **Bench-verify** (flash + `prov-profile <hex>` + `prov-show` survives reboot) pending with increment 3 |
-| 3 | On-target generic reader + app wiring behind `CONFIG_APP_FIELD_PROFILE_DRIVEN` | sim + real read of MFM384 via profile == compiled path, byte-identical uplink |
+| 3 ✅ | On-target generic reader (`meter_read_profile`) + app wiring (runtime auto-detect: NVS profile → generic path, else compiled) | **done — HW-validated 2026-06-24** on board `3c:dc:75:6f:85:dc`: MFM384 profile (452 B blob via `prov-profile`) drove a live read — `PROFILE-DRIVEN device_byte=0x01, 23 measurands`, V1N=54.67 V (sane, == compiled FC04/CDAB decode), 39 B frame, `uplink OK`, no stale. RS-FSJT profile authored byte-identical to the compiled path (pending sensor power). **Caveat:** the 39 B MFM384 profile frame needs its matching ChirpStack decoder (firmware decoder is the 19 B Phase-6c layout) — CRM-side decoder-from-profile is a follow-up |
 | 4 | Auto-scan-for-ID at commission (reuse `modbus_master_scan`; persist discovered unit) | node finds the slave ID with no provisioned `unit`, then uplinks |
 | 5 | Bench-validate all 4 profiles (MFM384/RS-FSJT real where available; EEM400/DSE via sim/real) + soak | each profile decodes sane in ChirpStack; budgets green |
 

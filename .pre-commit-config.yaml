@@ -2,8 +2,12 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # Skip the read-only vendored reference snapshot so it stays byte-identical
+      # to upstream (gitleaks below still scans it for defence-in-depth).
       - id: end-of-file-fixer
+        exclude: '^device-profiles/reference/'
       - id: trailing-whitespace
+        exclude: '^device-profiles/reference/'
       - id: check-yaml
         args: [--allow-multiple-documents]
       - id: check-merge-conflict
@@ -22,3 +26,4 @@ repos:
         language: system
         types_or: [c, c++]
         files: \.(c|cc|cpp|h|hpp)$
+        exclude: '^device-profiles/reference/'

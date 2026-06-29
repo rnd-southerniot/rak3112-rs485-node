@@ -1,0 +1,63 @@
+# Device profiles
+
+Machine-readable Modbus device profiles for the rak3112-rs485-node fleet. Each profile captures
+**everything needed to talk to a field device — except the Modbus slave/unit ID**, which is
+discovered at commissioning by the node's bus-scan (the same device model has different unit IDs at
+different client sites).
+
+These profiles are the single source of truth served by **`crm.siot.solutions`** for
+**auto-provisioning**: the CRM writes a profile (+ LoRaWAN creds) into the node's NVS, the node scans
+the bus to learn the slave ID, and a table-driven reader walks the profile to sample → encode
+(ADR-005) → uplink. No per-device firmware rebuild.
+
+## Files
+
+```
+device-profiles/
+├── schema.json            # JSON Schema (draft 2020-12) for a profile
+├── validate_profiles.py   # validates profiles vs schema + cross-checks
+├── profiles/
+│   ├── selec-mfm384.json     # Selec MFM384-C energy meter
+│   ├── honeywell-eem400.json # Honeywell EEM400C-D-MO energy meter
+│   └── deepsea-dse.json      # Deep Sea genset controller
+└── reference/             # READ-ONLY provenance (do not edit) — see reference/README.md
+```
+
+## Unified device-type registry (ADR-005 payload byte)
+
+Device bytes **must stay unique** across these profiles AND the `rak3112-rs485-node` firmware
+(`firmware/components/payload/include/telemetry.h`):
+
+| Byte | Device | Profile |
+|---|---|---|
+| `0x01` | Selec MFM384 | `selec-mfm384` |
+| `0x02` | RS-FSJT-N01 wind sensor | *(in firmware repo)* |
+| `0x03` | Honeywell EEM400 | `honeywell-eem400` |
+| `0x04` | Deep Sea controller | `deepsea-dse` |
+
+> The reference decoders/payloads used `MFM384 = 0x02`; the canonical registry reserves `0x02` for
+> the wind sensor, so MFM384 is `0x01` here. Bump the reference decoder's device byte on integration.
+
+## Ground-truth rule
+
+The proven Arduino code is authority for everything on the wire (register address, FC03/04, type,
+**word order**, scale, baud/parity/stop). The datasheet provides ranges/units and names. On conflict,
+the wire wins — each profile's `conflicts` array records the discrepancies (carried from the
+reference `meter_*.c` conflict logs).
+
+## Validate
+
+```bash
+python3 device-profiles/validate_profiles.py        # structural + cross-checks
+pip install jsonschema && python3 device-profiles/validate_profiles.py   # + full schema validation
+```
+
+## How a profile maps to the firmware
+
+- `bus` + `defaults` + `scan` → RS-485 init, and the unit-ID discovery (`modbus_master_scan`).
+- `measurands[]` → the table-driven Modbus reader (`reg`, `fc`, `type`, `word_order`, `scale`).
+- `payload[]` → the ADR-005 encoder + the matching ChirpStack decoder (`offset`, `encoding`, `scale`).
+- `provisioning.slave_id_source = "scan"` → the ID is **not** provisioned; the node finds it.
+
+Consuming these profiles at runtime (generic reader + NVS profile loader, extending Phase 7d) is a
+firmware task tracked separately in `rak3112-rs485-node`.

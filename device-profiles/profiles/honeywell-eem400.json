@@ -1,0 +1,81 @@
+{
+  "profile_id": "honeywell-eem400",
+  "schema_version": 1,
+  "device": {
+    "manufacturer": "Honeywell",
+    "model": "EEM400C-D-MO",
+    "category": "energy-meter",
+    "type_byte": 3
+  },
+  "bus": { "baud": 19200, "parity": "E", "data_bits": 8, "stop_bits": 1 },
+  "defaults": { "function_code": 3, "word_order": "ABCD" },
+  "scan": {
+    "function_code": 3,
+    "register": 35,
+    "quantity": 1,
+    "match": "any-reply",
+    "note": "FC03 wire 35 (datasheet R36, URMS ph1) - a live single-register read. Protocol address = R-1 per datasheet."
+  },
+  "measurands": [
+    { "key": "t1_total_kwh", "name": "Tariff-1 total energy",   "unit": "kWh",  "function_code": 3, "register": 27, "type": "u32", "word_order": "ABCD", "scale": 0.1, "accumulating": true },
+    { "key": "t1_part_kwh",  "name": "Tariff-1 partial energy", "unit": "kWh",  "function_code": 3, "register": 29, "type": "u32", "word_order": "ABCD", "scale": 0.1, "accumulating": true },
+    { "key": "t2_total_kwh", "name": "Tariff-2 total energy",   "unit": "kWh",  "function_code": 3, "register": 31, "type": "u32", "word_order": "ABCD", "scale": 0.1, "accumulating": true },
+    { "key": "v1",           "name": "Phase-1 RMS voltage",     "unit": "V",    "function_code": 3, "register": 35, "type": "u16", "scale": 1.0 },
+    { "key": "i1",           "name": "Phase-1 RMS current",     "unit": "A",    "function_code": 3, "register": 36, "type": "u16", "scale": 0.1 },
+    { "key": "p1",           "name": "Phase-1 active power",    "unit": "kW",   "function_code": 3, "register": 37, "type": "u16", "scale": 0.1 },
+    { "key": "q1",           "name": "Phase-1 reactive power",  "unit": "kvar", "function_code": 3, "register": 38, "type": "u16", "scale": 0.1 },
+    { "key": "cos1",         "name": "Power factor phase 1",    "unit": "",     "function_code": 3, "register": 39, "type": "u16", "scale": 0.01 },
+    { "key": "v2",           "name": "Phase-2 RMS voltage",     "unit": "V",    "function_code": 3, "register": 40, "type": "u16", "scale": 1.0 },
+    { "key": "i2",           "name": "Phase-2 RMS current",     "unit": "A",    "function_code": 3, "register": 41, "type": "u16", "scale": 0.1 },
+    { "key": "p2",           "name": "Phase-2 active power",    "unit": "kW",   "function_code": 3, "register": 42, "type": "u16", "scale": 0.1 },
+    { "key": "q2",           "name": "Phase-2 reactive power",  "unit": "kvar", "function_code": 3, "register": 43, "type": "u16", "scale": 0.1 },
+    { "key": "cos2",         "name": "Power factor phase 2",    "unit": "",     "function_code": 3, "register": 44, "type": "u16", "scale": 0.01 },
+    { "key": "v3",           "name": "Phase-3 RMS voltage",     "unit": "V",    "function_code": 3, "register": 45, "type": "u16", "scale": 1.0 },
+    { "key": "i3",           "name": "Phase-3 RMS current",     "unit": "A",    "function_code": 3, "register": 46, "type": "u16", "scale": 0.1 },
+    { "key": "p3",           "name": "Phase-3 active power",    "unit": "kW",   "function_code": 3, "register": 47, "type": "u16", "scale": 0.1 },
+    { "key": "q3",           "name": "Phase-3 reactive power",  "unit": "kvar", "function_code": 3, "register": 48, "type": "u16", "scale": 0.1 },
+    { "key": "cos3",         "name": "Power factor phase 3",    "unit": "",     "function_code": 3, "register": 49, "type": "u16", "scale": 0.01 },
+    { "key": "p_total",      "name": "Total active power",      "unit": "kW",   "function_code": 3, "register": 50, "type": "u16", "scale": 0.1 },
+    { "key": "q_total",      "name": "Total reactive power",    "unit": "kvar", "function_code": 3, "register": 51, "type": "u16", "scale": 0.1 }
+  ],
+  "payload": {
+    "device_byte": 3,
+    "total_len": 43,
+    "fields": [
+      { "key": "t1_total_kwh", "offset": 0,  "encoding": "u32", "scale": 10 },
+      { "key": "t1_part_kwh",  "offset": 4,  "encoding": "u32", "scale": 10 },
+      { "key": "t2_total_kwh", "offset": 8,  "encoding": "u32", "scale": 10 },
+      { "key": "v1",           "offset": 12, "encoding": "u16", "scale": 10 },
+      { "key": "v2",           "offset": 14, "encoding": "u16", "scale": 10 },
+      { "key": "v3",           "offset": 16, "encoding": "u16", "scale": 10 },
+      { "key": "i1",           "offset": 18, "encoding": "u16", "scale": 10 },
+      { "key": "i2",           "offset": 20, "encoding": "u16", "scale": 10 },
+      { "key": "i3",           "offset": 22, "encoding": "u16", "scale": 10 },
+      { "key": "p1",           "offset": 24, "encoding": "i16", "scale": 10 },
+      { "key": "p2",           "offset": 26, "encoding": "i16", "scale": 10 },
+      { "key": "p3",           "offset": 28, "encoding": "i16", "scale": 10 },
+      { "key": "q1",           "offset": 30, "encoding": "i16", "scale": 10 },
+      { "key": "q2",           "offset": 32, "encoding": "i16", "scale": 10 },
+      { "key": "q3",           "offset": 34, "encoding": "i16", "scale": 10 },
+      { "key": "p_total",      "offset": 36, "encoding": "i16", "scale": 10 },
+      { "key": "q_total",      "offset": 38, "encoding": "i16", "scale": 10 }
+    ]
+  },
+  "provisioning": {
+    "slave_id_source": "scan",
+    "note": "Default unit ID 0x01; discovered by scan at commissioning."
+  },
+  "source": {
+    "repo": "RedwanRifat07/modbus-simulated-dataset",
+    "commit": "ac6cd3fb02b8423f0bac5b746867d8f038b620bf",
+    "arduino": "arduino-code/honeywell_data_read_only_with_rak4630.ino",
+    "datasheet": "datasheets/honeywell_data_sheet.pdf",
+    "firmware_c": "firmware/components/meter/meter_eem400.c"
+  },
+  "conflicts": [
+    "[C1] T2 registers (R32-33 / wire 31): Arduino reads as T2 kWh; datasheet marks 'Not Used'. Arduino wins.",
+    "[C2] Current scale: Arduino divides by 10 (assumes 5/5 CT). Non-5/5 CTs would be x1 per datasheet. Confirm CT ratio per install.",
+    "[C3] Power scale: datasheet multiplier 10^-1 (x0.1 -> kW) used here; the Arduino's (i%5) switch had a modulo wrap bug giving x0.01 for totals. Datasheet value is physically correct. VERIFY against a live meter.",
+    "Power/reactive measurands typed u16 to mirror the proven reader (no sign cast); if the meter reports signed power, change type to i16."
+  ]
+}

@@ -139,4 +139,100 @@ config APP_FIELD_SAMPLE_INTERVAL_S
     help
         AS923 dwell + fair-use friendly. Keep >= 60 for normal operation.
 
+# ---------------------------------------------------------------------------
+# Phase 7a — resilience: task-watchdog timeout + a debug starve path for the gate.
+# ---------------------------------------------------------------------------
+
+config APP_TASK_WDT_TIMEOUT_S
+    int "Resilience: task-watchdog timeout (seconds)"
+    range 5 300
+    default 15
+    help
+        The field-app task subscribes to the Task Watchdog Timer and feeds it at least every 2 s
+        (the inter-sample sleep is fed in 2 s chunks). This timeout must exceed that 2 s feed period
+        plus worst-case Modbus + LoRaWAN uplink time. 15 s is a safe bench default; revisit once
+        light-sleep duty-cycling lands (Phase 7b) if the feed cadence changes.
+
+config APP_DEBUG_WDT_STARVE
+    bool "Debug: stop feeding the task watchdog after a few cycles (7a gate)"
+    default n
+    help
+        Phase 7a smoke-gate aid. When set, the field-app loop deliberately stops feeding the Task
+        Watchdog after APP_DEBUG_WDT_STARVE_AFTER cycles and holds, so the TWDT fires and resets the
+        chip — proving the watchdog is armed (the next boot logs reset reason "task-WDT"). NEVER ship
+        with this set.
+
+config APP_DEBUG_WDT_STARVE_AFTER
+    int "Debug: cycles before starving the watchdog"
+    depends on APP_DEBUG_WDT_STARVE
+    range 1 20
+    default 3
+
+# ---------------------------------------------------------------------------
+# Phase 7d — provisioning: NVS-stored credentials + runtime config.
+# ---------------------------------------------------------------------------
+
+config APP_PROVISIONING_CONSOLE
+    bool "Provisioning: enable the USB-Serial-JTAG prov-* console"
+    default y
+    help
+        Starts a small REPL (prov-lorawan / prov-modbus / prov-show / prov-clear / prov-done) that
+        writes the NVS 'prov' namespace — OTAA credentials + Modbus field config — additively
+        (nonces/session preserved). It is available in field mode too, so a deployed node can be
+        re-pointed (baud/interval/meter) or re-keyed without erasing NVS. An unprovisioned node
+        waits here until creds are written. Turn OFF only for a locked build whose credentials are
+        compiled in or already in NVS (no field re-provisioning).
+
+# ---------------------------------------------------------------------------
+# Phase 7b — power: light-sleep duty-cycling between samples.
+# ---------------------------------------------------------------------------
+
+config APP_LIGHT_SLEEP
+    bool "Power: light-sleep between samples (duty-cycle)"
+    default n
+    help
+        Between sample+uplink cycles the field loop enters manual light-sleep (CPU + peripherals
+        gated, RTC timer wake) instead of a busy vTaskDelay. RAM is retained, so the LoRaWAN session
+        survives (no re-join). The sleep is chunked so the task watchdog keeps getting fed; while it
+        is on, the idle-task watchdog is disabled (manual light-sleep freezes idle by design).
+
+        DEFAULT OFF (Phase 7b): verify on a DC/battery bench with USB DISCONNECTED before enabling
+        by default. With the board USB-powered and the USB-Serial-JTAG console active (VBUS present),
+        esp_light_sleep_start() does not behave cleanly on this ESP32-S3 — the node runs cycle 0 then
+        the console goes dark and cycling can't be observed/confirmed over USB. Field nodes run on
+        battery/DC (no VBUS), which is also the only setup that measures true average current (the
+        7b power gate, OQ-12). Enable + verify there.
+
+# ---------------------------------------------------------------------------
+# Phase 7c — OTA: build tag + a debug bad-image path for the rollback gate.
+# ---------------------------------------------------------------------------
+
+config APP_BUILD_TAG
+    string "OTA: firmware build tag (logged at boot)"
+    default "A"
+    help
+        A short label logged at boot (and via ota-status) to tell builds apart during OTA tests —
+        e.g. build A into ota_0, build B activated into ota_1.
+
+config APP_DEBUG_OTA_BAD
+    bool "Debug: abort at boot before mark-valid (7c rollback gate)"
+    default n
+    help
+        Builds a deliberately-broken image that aborts in app_main BEFORE marking itself valid, so
+        activating it via OTA leaves it PENDING_VERIFY; on the post-crash reboot the bootloader
+        rolls back to the previous good slot. NEVER ship with this set.
+
+# ---------------------------------------------------------------------------
+# Bench: WS2812 "alive" heartbeat (power bring-up aid).
+# ---------------------------------------------------------------------------
+
+config APP_LED_HEARTBEAT
+    bool "Bench: WS2812 'alive' heartbeat (skip LoRa/Modbus/sleep)"
+    default n
+    help
+        Standalone bench mode: drives the onboard WS2812 (GPIO38) as a breathing heartbeat and does
+        nothing else — no LoRaWAN, no Modbus, no provisioning, no light-sleep. Use it to confirm the
+        board is powered and running from ANY supply (DC1 barrel / USB-C / power bank) WITHOUT a USB
+        host: a visible colour pulse = alive. Leave OFF for field firmware.
+
 endmenu

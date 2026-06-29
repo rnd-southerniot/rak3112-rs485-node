@@ -5,18 +5,87 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_sleep.h"
+#include "esp_system.h"
+#include "esp_task_wdt.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "sdkconfig.h"
 
 #include "gpio_remap.h"
 #include "lora.h"
 #include "meter.h"
+#include "ota.h"
 #include "payload.h"
+#include "provisioning.h"
 #if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT || !CONFIG_APP_FIELD_SIMULATE
 #include "modbus_master.h"
 #include "rs485.h"
 #endif
 
 static const char *TAG = "app";
+
+static const char *reset_reason_str(esp_reset_reason_t r)
+{
+    switch (r) {
+    case ESP_RST_POWERON:
+        return "power-on";
+    case ESP_RST_EXT:
+        return "external";
+    case ESP_RST_SW:
+        return "software";
+    case ESP_RST_PANIC:
+        return "panic/exception";
+    case ESP_RST_INT_WDT:
+        return "interrupt-WDT";
+    case ESP_RST_TASK_WDT:
+        return "task-WDT";
+    case ESP_RST_WDT:
+        return "other-WDT";
+    case ESP_RST_DEEPSLEEP:
+        return "deep-sleep-wake";
+    case ESP_RST_BROWNOUT:
+        return "brownout";
+    case ESP_RST_SDIO:
+        return "SDIO";
+    case ESP_RST_USB:
+        return "USB";
+    case ESP_RST_JTAG:
+        return "JTAG";
+    default:
+        return "unknown";
+    }
+}
+
+/* Reset-cause + persistent boot counter, logged once at startup (7a; seed of the firmware §8 fault
+ * log). */
+static void log_boot_diagnostics(void)
+{
+    const esp_reset_reason_t reason = esp_reset_reason();
+
+    esp_err_t nv = nvs_flash_init();
+    if (nv == ESP_ERR_NVS_NO_FREE_PAGES || nv == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nv = nvs_flash_init();
+    }
+    uint32_t boot = 0;
+    nvs_handle_t h;
+    if (nv == ESP_OK && nvs_open("faultlog", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_get_u32(h, "bootcnt", &boot); /* leaves boot=0 if the key is unset */
+        boot += 1;
+        nvs_set_u32(h, "bootcnt", boot);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+
+    ESP_LOGW(TAG, "=== boot #%lu — reset reason: %s (%d) ===", (unsigned long)boot,
+             reset_reason_str(reason), (int)reason);
+    if (reason == ESP_RST_TASK_WDT || reason == ESP_RST_INT_WDT || reason == ESP_RST_WDT) {
+        ESP_LOGW(TAG, "previous boot ended in a WATCHDOG reset");
+    } else if (reason == ESP_RST_BROWNOUT) {
+        ESP_LOGW(TAG, "previous boot ended in a BROWNOUT — inspect the 3V3 rail / RT6160");
+    }
+}
 
 /* GPIO9/GPIO40 held deliberate-floating on V1.1 (ADR-001 EC-4/EC-9; Phase 3 carry-forward). */
 static void hold_reserved_pins_floating(void)
@@ -165,88 +234,298 @@ static void run_modbus_poll(void)
 }
 #endif /* CONFIG_APP_MODBUS_POLL_ON_BOOT */
 
+/* Arm the Task Watchdog for the field-app task; fed once per cycle + during the sleep (7a). */
+static void field_wdt_arm(void)
+{
+    esp_task_wdt_config_t cfg = {
+        .timeout_ms = 1000u * (uint32_t)CONFIG_APP_TASK_WDT_TIMEOUT_S,
+/* Light-sleep (7b) freezes the idle tasks by design, so don't watch them — only the field task. */
+#if CONFIG_APP_LIGHT_SLEEP
+        .idle_core_mask = 0,
+#else
+        .idle_core_mask = (1u << portNUM_PROCESSORS) - 1u,
+#endif
+        .trigger_panic = true,
+    };
+    /* IDF already init'd the TWDT (CONFIG_ESP_TASK_WDT_INIT) — reconfigure to our timeout. */
+    esp_err_t err = esp_task_wdt_reconfigure(&cfg);
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_ERROR_CHECK(esp_task_wdt_init(&cfg));
+    } else {
+        ESP_ERROR_CHECK(err);
+    }
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL)); /* watch this (field-app) task */
+    ESP_LOGI(TAG, "task watchdog armed: %ds timeout, panic-on-starve",
+             CONFIG_APP_TASK_WDT_TIMEOUT_S);
+}
+
+/* Inter-sample wait split into <=2 s chunks, feeding the WDT each chunk so the long sleep never
+ * starves the watchdog (a hang in the work section above still trips it). With light-sleep (7b)
+ * each chunk is a manual light-sleep (CPU + peripherals gated, RTC timer wake; RAM retained so the
+ * LoRaWAN session survives); otherwise a plain vTaskDelay. */
+static void wdt_fed_delay(TickType_t total)
+{
+    const TickType_t chunk = pdMS_TO_TICKS(2000);
+    while (total > 0) {
+        const TickType_t d = total < chunk ? total : chunk;
+#if CONFIG_APP_LIGHT_SLEEP
+        ESP_ERROR_CHECK(
+            esp_sleep_enable_timer_wakeup((uint64_t)(d * portTICK_PERIOD_MS) * 1000ULL));
+        esp_light_sleep_start();
+#else
+        vTaskDelay(d);
+#endif
+        ESP_ERROR_CHECK(esp_task_wdt_reset());
+        total -= d;
+    }
+}
+
+/* Runtime field configuration (7d). NVS namespace 'prov' overrides the Kconfig build defaults so a
+ * node can be re-pointed at a different meter / baud / interval without a rebuild. */
+typedef enum { FIELD_DEV_MFM384 = 0, FIELD_DEV_RSFSJT = 1 } field_device_t;
+typedef struct {
+    uint8_t device; /* field_device_t */
+    uint32_t baud;
+    uint8_t parity; /* 0=N, 1=E, 2=O */
+    uint8_t unit;
+    uint32_t interval_s;
+    bool from_nvs; /* any field came from NVS */
+} field_cfg_t;
+
+static uart_parity_t parity_enum(uint8_t p)
+{
+    return p == 1 ? UART_PARITY_EVEN : (p == 2 ? UART_PARITY_ODD : UART_PARITY_DISABLE);
+}
+static const char *parity_label(uint8_t p)
+{
+    return p == 1 ? "8E1" : (p == 2 ? "8O1" : "8N1");
+}
+
+static void load_field_cfg(field_cfg_t *c)
+{
+#if CONFIG_APP_FIELD_DEVICE_RSFSJT
+    c->device = FIELD_DEV_RSFSJT;
+#else
+    c->device = FIELD_DEV_MFM384;
+#endif
+    c->baud = (uint32_t)CONFIG_APP_FIELD_BAUD;
+    c->parity = 0;
+    c->unit = (uint8_t)CONFIG_APP_FIELD_UNIT;
+    c->interval_s = (uint32_t)CONFIG_APP_FIELD_SAMPLE_INTERVAL_S;
+    c->from_nvs = false;
+
+    nvs_handle_t h;
+    if (nvs_open("prov", NVS_READONLY, &h) == ESP_OK) {
+        uint8_t u8;
+        uint32_t u32;
+        if (nvs_get_u8(h, "dev", &u8) == ESP_OK) {
+            c->device = u8;
+            c->from_nvs = true;
+        }
+        if (nvs_get_u32(h, "baud", &u32) == ESP_OK) {
+            c->baud = u32;
+            c->from_nvs = true;
+        }
+        if (nvs_get_u8(h, "par", &u8) == ESP_OK) {
+            c->parity = u8;
+            c->from_nvs = true;
+        }
+        if (nvs_get_u8(h, "unit", &u8) == ESP_OK) {
+            c->unit = u8;
+            c->from_nvs = true;
+        }
+        if (nvs_get_u32(h, "intv", &u32) == ESP_OK) {
+            c->interval_s = u32;
+            c->from_nvs = true;
+        }
+        nvs_close(h);
+    }
+}
+
 /*
  * Field application: sample the configured device (real Modbus or simulated) then LoRaWAN-uplink a
- * compact ADR-005 payload, every CONFIG_APP_FIELD_SAMPLE_INTERVAL_S. Assumes lora is already
- * joined.
+ * compact ADR-005 payload, every interval. Config from NVS 'prov' (else Kconfig). Assumes lora is
+ * already joined.
  */
 static void run_field_app(void)
 {
-    const uint8_t unit = (uint8_t)CONFIG_APP_FIELD_UNIT;
-    const TickType_t period = pdMS_TO_TICKS(1000u * (uint32_t)CONFIG_APP_FIELD_SAMPLE_INTERVAL_S);
+    field_cfg_t cfg;
+    load_field_cfg(&cfg);
+    const TickType_t period = pdMS_TO_TICKS(1000u * cfg.interval_s);
+    const char *dev_name = (cfg.device == FIELD_DEV_RSFSJT) ? "RS-FSJT" : "MFM384";
 
 #if !CONFIG_APP_FIELD_SIMULATE
-    const rs485_config_t cfg = {
+    const rs485_config_t rcfg = {
         .port = UART_NUM_1,
         .tx_gpio = PIN_RS485_TX,
         .rx_gpio = PIN_RS485_RX,
         .de_re_gpio = PIN_RS485_DE_RE,
-        .baud_rate = CONFIG_APP_FIELD_BAUD,
-        .parity = UART_PARITY_DISABLE,
+        .baud_rate = (int)cfg.baud,
+        .parity = parity_enum(cfg.parity),
         .rx_buffer_size = 256,
     };
-    ESP_ERROR_CHECK(rs485_init(&cfg));
-    ESP_LOGI(TAG, "field app: REAL Modbus, unit %u @ %d 8N1, %ds interval", (unsigned)unit,
-             CONFIG_APP_FIELD_BAUD, CONFIG_APP_FIELD_SAMPLE_INTERVAL_S);
+    ESP_ERROR_CHECK(rs485_init(&rcfg));
+    ESP_LOGI(TAG, "field app: REAL Modbus %s, unit %u @ %lu %s, %lus interval [cfg:%s]", dev_name,
+             (unsigned)cfg.unit, (unsigned long)cfg.baud, parity_label(cfg.parity),
+             (unsigned long)cfg.interval_s, cfg.from_nvs ? "NVS" : "build-default");
 #else
-    ESP_LOGW(TAG, "field app: SIMULATED data (no Modbus), %ds interval — uplinks flagged simulated",
-             CONFIG_APP_FIELD_SAMPLE_INTERVAL_S);
+    ESP_LOGW(TAG,
+             "field app: SIMULATED %s (no Modbus), %lus interval [cfg:%s] — uplinks flagged "
+             "simulated",
+             dev_name, (unsigned long)cfg.interval_s, cfg.from_nvs ? "NVS" : "build-default");
+#endif
+
+    field_wdt_arm();
+#if CONFIG_APP_LIGHT_SLEEP
+    ESP_LOGI(TAG, "light-sleep duty-cycle ON — CPU sleeps between samples (session retained)");
+#else
+    ESP_LOGI(TAG, "light-sleep OFF — busy-wait between samples");
 #endif
 
     for (uint32_t tick = 0;; ++tick) {
+        esp_task_wdt_reset();
         uint8_t buf[PAYLOAD_MAX];
         size_t len = 0;
         uint8_t flags = 0;
 
-#if CONFIG_APP_FIELD_DEVICE_MFM384
-        mfm384_sample_t s = {0};
+        if (cfg.device == FIELD_DEV_MFM384) {
+            mfm384_sample_t s = {0};
 #if CONFIG_APP_FIELD_SIMULATE
-        meter_sim_mfm384(tick, &s);
-        flags |= TELEMETRY_FLAG_SIMULATED;
+            meter_sim_mfm384(tick, &s);
+            flags |= TELEMETRY_FLAG_SIMULATED;
 #else
-        if (meter_read_mfm384(UART_NUM_1, unit, &s) != ESP_OK) {
-            flags |= TELEMETRY_FLAG_STALE;
-            ESP_LOGW(TAG, "[%lu] MFM384 read failed — uplinking stale-flagged",
-                     (unsigned long)tick);
-        }
+            if (meter_read_mfm384(UART_NUM_1, cfg.unit, &s) != ESP_OK) {
+                flags |= TELEMETRY_FLAG_STALE;
+                ESP_LOGW(TAG, "[%lu] MFM384 read failed — uplinking stale-flagged",
+                         (unsigned long)tick);
+            }
 #endif
-        len = payload_encode_mfm384(&s, flags, buf, sizeof(buf));
-        ESP_LOGI(TAG, "[%lu] MFM384 V=%.1f/%.1f/%.1f kW=%.2f kWh=%.2f f=%.2f pf=%.3f -> %u B",
-                 (unsigned long)tick, s.v1n, s.v2n, s.v3n, s.total_kw, s.total_kwh, s.freq,
-                 s.avg_pf, (unsigned)len);
-#elif CONFIG_APP_FIELD_DEVICE_RSFSJT
-        rsfsjt_sample_t s = {0};
+            len = payload_encode_mfm384(&s, flags, buf, sizeof(buf));
+            ESP_LOGI(TAG, "[%lu] MFM384 V=%.1f/%.1f/%.1f kW=%.2f kWh=%.2f f=%.2f pf=%.3f -> %u B",
+                     (unsigned long)tick, s.v1n, s.v2n, s.v3n, s.total_kw, s.total_kwh, s.freq,
+                     s.avg_pf, (unsigned)len);
+        } else {
+            rsfsjt_sample_t s = {0};
 #if CONFIG_APP_FIELD_SIMULATE
-        meter_sim_rsfsjt(tick, &s);
-        flags |= TELEMETRY_FLAG_SIMULATED;
+            meter_sim_rsfsjt(tick, &s);
+            flags |= TELEMETRY_FLAG_SIMULATED;
 #else
-        if (meter_read_rsfsjt(UART_NUM_1, unit, &s) != ESP_OK) {
-            flags |= TELEMETRY_FLAG_STALE;
-            ESP_LOGW(TAG, "[%lu] RS-FSJT read failed — uplinking stale-flagged",
-                     (unsigned long)tick);
+            if (meter_read_rsfsjt(UART_NUM_1, cfg.unit, &s) != ESP_OK) {
+                flags |= TELEMETRY_FLAG_STALE;
+                ESP_LOGW(TAG, "[%lu] RS-FSJT read failed — uplinking stale-flagged",
+                         (unsigned long)tick);
+            }
+#endif
+            len = payload_encode_rsfsjt(&s, flags, buf, sizeof(buf));
+            ESP_LOGI(TAG, "[%lu] RS-FSJT wind=%.2f m/s -> %u B", (unsigned long)tick, s.wind_mps,
+                     (unsigned)len);
         }
-#endif
-        len = payload_encode_rsfsjt(&s, flags, buf, sizeof(buf));
-        ESP_LOGI(TAG, "[%lu] RS-FSJT wind=%.2f m/s -> %u B", (unsigned long)tick, s.wind_mps,
-                 (unsigned)len);
-#endif
 
         if (len > 0) {
             lora_send(buf, len);
         }
-        vTaskDelay(period);
+
+#if CONFIG_APP_DEBUG_WDT_STARVE
+        if (tick + 1 >= (uint32_t)CONFIG_APP_DEBUG_WDT_STARVE_AFTER) {
+            ESP_LOGE(TAG,
+                     "DEBUG: starving the task watchdog after %lu cycle(s) — expect a TWDT reset "
+                     "in ~%ds (7a gate)",
+                     (unsigned long)(tick + 1), CONFIG_APP_TASK_WDT_TIMEOUT_S);
+            for (;;) {
+                vTaskDelay(pdMS_TO_TICKS(1000)); /* deliberately NOT feeding the watchdog */
+            }
+        }
+#endif
+        wdt_fed_delay(period);
     }
 }
 
+#if CONFIG_APP_LED_HEARTBEAT
+#include "led_strip.h"
+/* Bench "alive" indicator: breathe the WS2812 (GPIO38), rotating colour so it's clearly
+ * firmware-driven. No LoRa / Modbus / provisioning / sleep — proves the board runs on any supply
+ * (DC1 / USB-C / power bank) without a USB host. Does not return. */
+static void run_led_heartbeat(void)
+{
+    const led_strip_config_t scfg = {
+        .strip_gpio_num = PIN_WS2812_DIN,
+        .max_leds = 1,
+        .led_pixel_format = LED_PIXEL_FORMAT_GRB,
+        .led_model = LED_MODEL_WS2812,
+        .flags = {.invert_out = false},
+    };
+    const led_strip_rmt_config_t rcfg = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 10 * 1000 * 1000, /* 10 MHz */
+        .flags = {.with_dma = false},
+    };
+    led_strip_handle_t strip = NULL;
+    ESP_ERROR_CHECK(led_strip_new_rmt_device(&scfg, &rcfg, &strip));
+    ESP_LOGW(TAG, "LED heartbeat — board ALIVE. Breathing WS2812 (GPIO38); no LoRa/Modbus/sleep.");
+
+    static const uint8_t palette[][3] = {
+        {0, 1, 0}, {0, 1, 1}, {0, 0, 1},
+        {1, 0, 1}, {1, 1, 0}, /* green, cyan, blue, magenta, yellow */
+    };
+    const int n = sizeof(palette) / sizeof(palette[0]);
+    const int peak = 80; /* WS2812 is bright — keep moderate */
+    for (uint32_t i = 0;; ++i) {
+        const uint8_t *c = palette[i % n];
+        for (int b = 0; b <= peak; ++b) {
+            led_strip_set_pixel(strip, 0, (uint32_t)(c[0] * b), (uint32_t)(c[1] * b),
+                                (uint32_t)(c[2] * b));
+            led_strip_refresh(strip);
+            vTaskDelay(pdMS_TO_TICKS(9));
+        }
+        for (int b = peak; b >= 0; --b) {
+            led_strip_set_pixel(strip, 0, (uint32_t)(c[0] * b), (uint32_t)(c[1] * b),
+                                (uint32_t)(c[2] * b));
+            led_strip_refresh(strip);
+            vTaskDelay(pdMS_TO_TICKS(9));
+        }
+        vTaskDelay(pdMS_TO_TICKS(140));
+    }
+}
+#endif /* CONFIG_APP_LED_HEARTBEAT */
+
 void app_main(void)
 {
+#if CONFIG_APP_DEBUG_OTA_BAD
+    /* 7c rollback gate: crash before mark-valid so an OTA into this image rolls back. */
+    ESP_LOGE(TAG, "DEBUG: bad OTA image — aborting before mark-valid (7c rollback test)");
+    abort();
+#endif
     hold_reserved_pins_floating();
+    log_boot_diagnostics();
+    ota_log_boot();
+    ota_mark_valid(); /* booted into app code → healthy; cancel any pending rollback */
+
+#if CONFIG_APP_LED_HEARTBEAT
+    run_led_heartbeat(); /* bench: breathe the WS2812 forever; does not return */
+#endif
 
 #if CONFIG_APP_MODBUS_POLL_ON_BOOT
     run_modbus_poll(); /* bench bring-up mode — does not return */
 #elif CONFIG_APP_MODBUS_SCAN_ON_BOOT
     run_modbus_scan(); /* bench bring-up mode — does not return */
 #endif
+
+#if CONFIG_APP_PROVISIONING_CONSOLE
+    provisioning_console_start(); /* prov-* REPL on its own task; available in field mode too */
+    ota_register_commands();      /* ota-status / ota-activate on the same console */
+#endif
+
+    /* 7d: with no OTAA credentials (empty NVS 'prov' + placeholder compiled key), don't bogus-join
+     * — idle until the provisioning console writes creds (prov-done restarts into field mode). */
+    if (!lora_is_provisioned()) {
+        for (uint32_t i = 0;; ++i) {
+            if (i % 6 == 0) {
+                ESP_LOGW(TAG, "AWAITING PROVISIONING — no LoRaWAN credentials. Run "
+                              "tools/provision_nvs.py -p <port> (or the prov-* console).");
+            }
+            vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+    }
 
     ESP_ERROR_CHECK(lora_init());
 

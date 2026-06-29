@@ -1,0 +1,87 @@
+{
+  "profile_id": "selec-mfm384",
+  "schema_version": 1,
+  "device": {
+    "manufacturer": "Selec",
+    "model": "MFM384-C",
+    "category": "energy-meter",
+    "type_byte": 1
+  },
+  "bus": { "baud": 9600, "parity": "N", "data_bits": 8, "stop_bits": 1 },
+  "defaults": { "function_code": 4, "word_order": "CDAB" },
+  "scan": {
+    "function_code": 3,
+    "register": 6,
+    "quantity": 1,
+    "match": "any-reply",
+    "note": "FC03 reg 40007 (wire 6) linkcheck holding register; proven on hardware 2026-06-24."
+  },
+  "measurands": [
+    { "key": "v1n",        "name": "Phase-1 L-N voltage",      "unit": "V",    "function_code": 4, "register": 0,  "type": "float32", "scale": 1.0 },
+    { "key": "v2n",        "name": "Phase-2 L-N voltage",      "unit": "V",    "function_code": 4, "register": 2,  "type": "float32", "scale": 1.0 },
+    { "key": "v3n",        "name": "Phase-3 L-N voltage",      "unit": "V",    "function_code": 4, "register": 4,  "type": "float32", "scale": 1.0 },
+    { "key": "v_avg_ln",   "name": "Average L-N voltage",      "unit": "V",    "function_code": 4, "register": 6,  "type": "float32", "scale": 1.0 },
+    { "key": "v12",        "name": "L1-L2 voltage",            "unit": "V",    "function_code": 4, "register": 8,  "type": "float32", "scale": 1.0 },
+    { "key": "v23",        "name": "L2-L3 voltage",            "unit": "V",    "function_code": 4, "register": 10, "type": "float32", "scale": 1.0 },
+    { "key": "v31",        "name": "L3-L1 voltage",            "unit": "V",    "function_code": 4, "register": 12, "type": "float32", "scale": 1.0 },
+    { "key": "v_avg_ll",   "name": "Average L-L voltage",      "unit": "V",    "function_code": 4, "register": 14, "type": "float32", "scale": 1.0 },
+    { "key": "i1",         "name": "Phase-1 current",          "unit": "A",    "function_code": 4, "register": 16, "type": "float32", "scale": 1.0 },
+    { "key": "i3",         "name": "Phase-3 current",          "unit": "A",    "function_code": 4, "register": 20, "type": "float32", "scale": 1.0 },
+    { "key": "i_avg",      "name": "Average current",          "unit": "A",    "function_code": 4, "register": 22, "type": "float32", "scale": 1.0 },
+    { "key": "kw1",        "name": "Phase-1 active power",     "unit": "kW",   "function_code": 4, "register": 24, "type": "float32", "scale": 1.0 },
+    { "key": "kw2",        "name": "Phase-2 active power",     "unit": "kW",   "function_code": 4, "register": 26, "type": "float32", "scale": 1.0 },
+    { "key": "kw3",        "name": "Phase-3 active power",     "unit": "kW",   "function_code": 4, "register": 28, "type": "float32", "scale": 1.0 },
+    { "key": "total_kw",   "name": "Total active power",       "unit": "kW",   "function_code": 4, "register": 42, "type": "float32", "scale": 1.0 },
+    { "key": "total_kva",  "name": "Total apparent power",     "unit": "kVA",  "function_code": 4, "register": 44, "type": "float32", "scale": 1.0 },
+    { "key": "total_kvar", "name": "Total reactive power",     "unit": "kvar", "function_code": 4, "register": 46, "type": "float32", "scale": 1.0 },
+    { "key": "pf1",        "name": "Power factor phase 1",     "unit": "",     "function_code": 4, "register": 48, "type": "float32", "scale": 1.0 },
+    { "key": "pf2",        "name": "Power factor phase 2",     "unit": "",     "function_code": 4, "register": 50, "type": "float32", "scale": 1.0 },
+    { "key": "pf3",        "name": "Power factor phase 3",     "unit": "",     "function_code": 4, "register": 52, "type": "float32", "scale": 1.0 },
+    { "key": "avg_pf",     "name": "Average power factor",     "unit": "",     "function_code": 4, "register": 54, "type": "float32", "scale": 1.0 },
+    { "key": "freq_hz",    "name": "System frequency",         "unit": "Hz",   "function_code": 4, "register": 56, "type": "float32", "scale": 1.0 },
+    { "key": "total_kwh",  "name": "Total net active energy",  "unit": "kWh",  "function_code": 4, "register": 58, "type": "float32", "scale": 1.0, "accumulating": true }
+  ],
+  "payload": {
+    "device_byte": 1,
+    "total_len": 39,
+    "fields": [
+      { "key": "v1n",        "offset": 0,  "encoding": "u16", "scale": 10 },
+      { "key": "v2n",        "offset": 2,  "encoding": "u16", "scale": 10 },
+      { "key": "v3n",        "offset": 4,  "encoding": "u16", "scale": 10 },
+      { "key": "v12",        "offset": 6,  "encoding": "u16", "scale": 10 },
+      { "key": "v23",        "offset": 8,  "encoding": "u16", "scale": 10 },
+      { "key": "v31",        "offset": 10, "encoding": "u16", "scale": 10 },
+      { "key": "i1",         "offset": 12, "encoding": "u16", "scale": 100 },
+      { "key": "i3",         "offset": 14, "encoding": "u16", "scale": 100 },
+      { "key": "kw1",        "offset": 16, "encoding": "i16", "scale": 10 },
+      { "key": "kw2",        "offset": 18, "encoding": "i16", "scale": 10 },
+      { "key": "kw3",        "offset": 20, "encoding": "i16", "scale": 10 },
+      { "key": "total_kw",   "offset": 22, "encoding": "i16", "scale": 10 },
+      { "key": "total_kvar", "offset": 24, "encoding": "i16", "scale": 10 },
+      { "key": "pf1",        "offset": 26, "encoding": "i8",  "scale": 100 },
+      { "key": "pf2",        "offset": 27, "encoding": "i8",  "scale": 100 },
+      { "key": "pf3",        "offset": 28, "encoding": "i8",  "scale": 100 },
+      { "key": "avg_pf",     "offset": 29, "encoding": "i8",  "scale": 100 },
+      { "key": "freq_hz",    "offset": 30, "encoding": "u16", "scale": 100 },
+      { "key": "total_kwh",  "offset": 32, "encoding": "u32", "scale": 100 }
+    ]
+  },
+  "provisioning": {
+    "slave_id_source": "scan",
+    "note": "Default unit ID is 1, but discovered by scan at commissioning (varies per client)."
+  },
+  "source": {
+    "repo": "RedwanRifat07/modbus-simulated-dataset",
+    "commit": "ac6cd3fb02b8423f0bac5b746867d8f038b620bf",
+    "arduino": "arduino-code/MFM384_with_esp.ino",
+    "datasheet": "datasheets/MFM384_Instruction_Manual.pdf",
+    "firmware_c": "firmware/components/meter/meter_mfm384.c"
+  },
+  "conflicts": [
+    "Word order: datasheet default ABCD, but the proven Arduino reads CDAB (meter config reg 40070 = 0). Arduino (wire) wins -> CDAB.",
+    "[C1] reg 42: Arduino labels 'kVAr Phase 3', datasheet 30042 = 'Total KW'. Address wins -> mapped as total_kw.",
+    "[C2] reg 44: Arduino labels 'Total kW', datasheet 30044 = 'Total KVA'. Address wins -> mapped as total_kva.",
+    "Device type_byte unified to 0x01 (the reference decoder/payload used 0x02; the canonical rak3112-rs485-node registry reserves 0x02 for RS-FSJT). Bump the reference decoder's device byte 0x02->0x01 on integration.",
+    "I2 (reg 18) exists in the meter but is not read by the proven Arduino set; omitted."
+  ]
+}

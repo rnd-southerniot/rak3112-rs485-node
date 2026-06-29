@@ -24,3 +24,22 @@ CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y
 # RADIOLIB_ERR_TX_TIMEOUT (-5). 1 ms ticks make the wait accurate to ~1 ms (well inside the 10 ms
 # guard) and also tighten the RX1/RX2 window alignment. Matches RadioLib's ESP-IDF LoRaWAN guidance.
 CONFIG_FREERTOS_HZ=1000
+
+# Phase 7a (2026-06-25) — resilience. The Task Watchdog is initialised at boot; the field-app task
+# subscribes to it and feeds it (the runtime timeout is reconfigured from CONFIG_APP_TASK_WDT_TIMEOUT_S).
+# Brownout detector kept ENABLED at the IDF ESP32-S3 default level (LVL_SEL_7) so a sagging 3V3 rail
+# forces a clean, logged reset (reset cause printed at the next boot) instead of undefined behaviour.
+# Raise the BOD level only if the 7a soak shows rail margin — too high causes spurious resets on the
+# RT6160 rail.
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_BROWNOUT_DET=y
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y
+
+# Phase 7c (2026-06-25) — OTA: dual-slot partition table + bootloader app rollback. The custom
+# partitions.csv keeps nvs at 0x9000/0x6000 so the 7d provisioning + LoRaWAN nonces survive the
+# layout change (no full erase). Rollback: an image booted via esp_ota_set_boot_partition runs in
+# PENDING_VERIFY; if it reboots without esp_ota_mark_app_valid_cancel_rollback (e.g. it crashed),
+# the bootloader reverts to the previous good slot.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

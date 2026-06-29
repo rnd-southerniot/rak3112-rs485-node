@@ -5,6 +5,7 @@
 #ifndef LORA_H
 #define LORA_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
@@ -12,6 +13,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* True once OTAA credentials are available: the NVS 'prov' namespace (set by the provisioning
+ * console / tools/provision_nvs.py) takes priority; otherwise a real compiled key counts. A
+ * placeholder (all-zero) compiled key with empty NVS returns false → the node awaits provisioning.
+ */
+bool lora_is_provisioned(void);
 
 /* radio.begin (TCXO 1.8V, DIO2 RF switch, AS923 dwell). */
 esp_err_t lora_init(void);

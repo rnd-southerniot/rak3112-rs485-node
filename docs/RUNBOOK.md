@@ -494,6 +494,271 @@ confidence *before* the wiring fix — and the same harness immediately confirme
 **Remaining Phase 6 (6c):** NVS register-set config, ADR-005 payload schema (compact versioned
 binary + ChirpStack JS codec), encode MFM384 reads into the LoRaWAN uplink, then push/CI/merge/tag.
 
+## Phase 7a — Resilience: task watchdog + brownout + reset-cause (2026-06-25)
+
+**Goal (7a).** Arm the Task Watchdog on the field-app task, log the reset cause + a persistent boot
+counter at startup, and keep the brownout detector enabled — so a hung loop or a sagging rail forces
+a clean, *logged* reset instead of a silent wedge.
+
+**Implementation (`app_main.c`, `Kconfig.projbuild`, `sdkconfig.defaults`).**
+- `log_boot_diagnostics()` runs first in `app_main`: `esp_reset_reason()` → human label, plus an NVS
+  (`faultlog/bootcnt`) counter incremented every boot (seed of the firmware §8 fault log).
+- `field_wdt_arm()` reconfigures the TWDT to `CONFIG_APP_TASK_WDT_TIMEOUT_S` (panic-on-starve) and
+  subscribes the field-app task; the loop calls `esp_task_wdt_reset()` at the top of each cycle.
+- **Key design point — fed sleep.** The inter-sample `vTaskDelay(period)` is replaced by
+  `wdt_fed_delay()`, which splits the wait into ≤ 2 s chunks and feeds the WDT each chunk. Without
+  this, a 60 s sample interval would starve any sub-60 s watchdog; with it, the long intentional
+  sleep keeps the dog fed while a genuine hang in the work section still trips it.
+- Brownout: `CONFIG_ESP_BROWNOUT_DET=y` at the IDF S3 default level (LVL_SEL_7) — pinned explicitly,
+  not raised (a too-high threshold would spuriously reset on the RT6160 rail).
+- Gate aid: `CONFIG_APP_DEBUG_WDT_STARVE` stops feeding after N cycles (profile
+  `sdkconfig.defaults.wdt-test`). **Never ship set.**
+
+**HW pre-flight (passed).** Single port `/dev/cu.usbmodem1301`, ESP32-S3, MAC `3c:dc:75:6f:85:dc` =
+the project board (USB enumeration also confirms H1 / 3V3 in). No second board to confuse.
+
+**Smoke gate — both halves PASS (HIL, project board).**
+
+*Half 1 — the watchdog fires + the reset cause is logged* (profile `wdt-test`, 10 s timeout, starve
+after 2 cycles). Captured across reboots:
+```
+I (15904) lora: uplink OK (rx window=0)
+E (15904) app: DEBUG: starving the task watchdog after 2 cycle(s) — expect a TWDT reset in ~10s (7a gate)
+E (23441) task_wdt: Task watchdog got triggered. The following tasks/users did not reset the watchdog in time:
+E (23441) task_wdt: Aborting.
+Rebooting...
+rst:0xc (RTC_SW_CPU_RST),boot:0x2b (SPI_FAST_FLASH_BOOT)
+W (852) app: === boot #2 — reset reason: task-WDT (6) ===
+W (853) app: previous boot ended in a WATCHDOG reset
+I (896) lora: session restored (no re-join); uplink DR3 (SF9)
+I (896) app: task watchdog armed: 10s timeout, panic-on-starve
+```
+The NVS boot counter incremented `#2 → #3 → #4` across successive WDT resets; each boot correctly
+reported `reset reason: task-WDT (6)`. (Session also restored from NVS, no re-join — Phase 5 carry.)
+
+*Half 2 — clean run, no spurious resets* (sim field app, starve OFF). A **~11.5-min bench soak**
+(two captures on one uninterrupted run, ~49 uplinks at the 10 s interval): **zero `task_wdt`
+triggers, zero brownout events, zero reboots.** The `esp_log` millisecond timer advanced
+monotonically across the whole run (15.9 s → 215.6 s → 303 s → **690 s**, never returning to 0),
+which is the proof of "no reset" — a reset would zero it.
+
+**Result: 7a GREEN.** Both gate conditions met on the project board. `field_wdt_arm()` + the fed-sleep
+pattern carry forward to 7b (light-sleep will change the feed cadence — revisit `APP_TASK_WDT_TIMEOUT_S`
+and feed-during-wake then).
+
+**Lesson.** A watchdog on a long-interval sampler is only useful if the *intended* sleep keeps it fed.
+Feeding once per multi-second loop forces the timeout above the interval and blinds the dog during the
+sleep; chunked feeding (≤ 2 s) keeps the timeout short while still catching real hangs.
+
+## Phase 7d — Provisioning: NVS credentials + runtime config (2026-06-25)
+
+**Goal (7d).** Move OTAA credentials and Modbus field config out of the compiled image and into NVS,
+so a node is keyed/configured at provisioning time (not build time) — the headline being *no
+compiled-in secrets*. Provision via an on-device console fed by `tools/provision_nvs.py` from
+`firmware/.env` (the same source the SCOMM CRM mints).
+
+**Design.**
+- **NVS `prov` namespace** holds `deveui`/`joineui` (u64), `appkey` (16-byte blob) and Modbus
+  `dev`/`baud`/`par`/`unit`/`intv`. `lora.cpp` prefers NVS creds over the compiled
+  `lora_credentials.h` fallback; `lora_is_provisioned()` is false only when *both* are absent
+  (empty NVS + all-zero placeholder) → the node waits instead of bogus-joining.
+- **Runtime field config** (`app_main.c::load_field_cfg`): NVS `prov` overrides the Kconfig build
+  defaults, and the field loop branches on `device` at **runtime** (both MFM384 and RS-FSJT paths
+  compiled in) — so meter/baud/interval change with no rebuild.
+- **Additive provisioning, nonces preserved.** Provisioning writes only the `prov` namespace; the
+  `lorawan` namespace (DevNonce/session) is untouched — so a re-keyed/re-pointed node still does
+  `session restored (no re-join)` with no DevNonce regression (the failure mode a full NVS-image
+  overwrite would cause). This is why provisioning is a console (additive) rather than a
+  `parttool write_partition` (whole-partition overwrite).
+- **Provisioning console** (`provisioning.c`, `CONFIG_APP_PROVISIONING_CONSOLE=y`): a USB-Serial-JTAG
+  REPL (`prov-lorawan` / `prov-modbus` / `prov-show` / `prov-clear` / `prov-done`) on its own task,
+  available in field mode too (re-point a deployed node without erasing NVS). `tools/provision_nvs.py`
+  drives it from `.env`; the AppKey is never echoed (the device runs linenoise in dumb mode → no
+  echo, and the tool redacts).
+
+**Smoke gate — all three conditions PASS (HIL, project board, factory/placeholder-creds image).**
+
+1. *Unprovisioned waits, no bogus join.* Empty `prov` + placeholder compiled key:
+   ```
+   W (871) app: === boot #10 — reset reason: USB (11) ===
+   I (1423) prov: provisioning console ready — prov-lorawan / prov-modbus / … ; nonces/session preserved
+   prov> W (1435) app: AWAITING PROVISIONING — no LoRaWAN credentials. Run tools/provision_nvs.py …
+   ```
+   No `OTAA:` / `join attempt` line.
+
+2. *NVS creds drive the join.* `tools/provision_nvs.py … --env env_rsfsjt` wrote
+   `dev=1 baud=4800 unit=1 intv=20` + creds (AppKey redacted), `prov-done` restarted; next boot:
+   ```
+   I (1479) lora: OTAA: DevEUI=3cdc75fffe6f85dc JoinEUI=0000000000000000 [creds:NVS]
+   I (1485) lora: session restored (no re-join); uplink DR3 (SF9)
+   I (1491) app: field app: REAL Modbus RS-FSJT, unit 1 @ 4800 8N1, 20s interval [cfg:NVS]
+   ```
+   The compiled key is the all-zero placeholder, so a successful `uplink OK` *can only* be using NVS
+   creds; `session restored` confirms nonces survived provisioning.
+
+3. *Config change without rebuild.* Re-running the tool in **field mode** with `env_mfm384`
+   (`dev=0 baud=9600 intv=60`) on the **same binary** → next boot:
+   ```
+   I (1493) app: field app: REAL Modbus MFM384, unit 1 @ 9600 8N1, 60s interval [cfg:NVS]
+   ```
+   Device/baud/interval all flipped (RS-FSJT/4800/20 → MFM384/9600/60) with no recompile.
+
+**Result: 7d GREEN.** Default (real-creds) image re-flashed to leave the bench clean; it logs
+`[creds:NVS]` because the NVS provisioning now takes priority over the compiled fallback — the
+intended provisioned state. RS-485 reads stale-flag on the bench (no meter attached) — orthogonal
+to 7d (read path proven Phase 6).
+
+**Lessons.**
+- *Provision additively.* A whole-NVS-image write (parttool/nvs_partition_gen) wipes the LoRaWAN
+  nonces → DevNonce regression → ChirpStack rejects the re-join. Writing only the `prov` namespace
+  via a console keeps `lorawan` intact. Worth the extra firmware over the simpler host-image route.
+- *Kconfig add needs `rm sdkconfig`.* A new `config` with `default y` did not regenerate into an
+  existing `sdkconfig` on an incremental build — the console silently compiled out (binary barely
+  grew; `strings`/`nm` showed no `prov-*`). Deleting `sdkconfig` (or `fullclean`) forced the regen.
+  Same class as the Phase-7a `SDKCONFIG_DEFAULTS` cache stale. Verify a new Kconfig option lands in
+  `sdkconfig` before trusting the build.
+
+## Phase 7c — OTA: dual-slot partitions + rollback (2026-06-25)
+
+**Goal (7c).** Make field updates safe: a dual-slot (ota_0/ota_1) partition layout with bootloader
+**app rollback**, so a bad image automatically reverts to the last good one. The headline *risk* is
+the partition-table change (a destructive flash-layout edit); the network *transport*
+(WiFi/HTTPS or FUOTA, OQ-10) is deferred — it's also blocked on the bench (no WiFi creds, like 7b's
+current rig), so 7c exercises the rollback machinery via host-side image staging (`parttool` +
+`esp_ota_set_boot_partition`), which drives the *same* esp_ota state machine a network OTA would.
+
+**Design — no destructive erase.** `firmware/partitions.csv` keeps **nvs at the default
+0x9000/0x6000**, so the 7d provisioning (`prov`) and LoRaWAN nonces (`lorawan`) survive the layout
+change — `idf.py flash` rewrites bootloader + table + `ota_0` + `otadata` but leaves nvs intact.
+Layout: `nvs@0x9000(24K) · otadata@0xf000(8K) · phy@0x11000(4K) · ota_0@0x20000(3M) ·
+ota_1@0x320000(3M)`. `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`.
+
+`ota.c`: logs the running slot + state + build tag at boot; `ota_mark_valid()` cancels the pending
+rollback once the app reaches healthy code (no-op for a directly-flashed image); console commands
+`ota-status` and `ota-activate <0|1>` (the latter calls `esp_ota_set_boot_partition` → PENDING_VERIFY,
+rollback armed → restart). `CONFIG_APP_BUILD_TAG` (A/B) tells builds apart; `CONFIG_APP_DEBUG_OTA_BAD`
+builds an image that `abort()`s before mark-valid (profile `sdkconfig.defaults.ota-bad`).
+
+**Hardware safety.** Backed up `0x0..0x110000` (bootloader+table+nvs+phy+app, 1.11 MB) before the
+first layout flash — restore with `esptool write_flash 0x0 <backup>`. Project board MAC
+`3c:dc:75:6f:85:dc`.
+
+**Smoke gate — all three conditions PASS (HIL, project board).**
+
+1. *Layout flash, nvs preserved.* After flashing the OTA layout (no erase):
+   ```
+   W (900) ota: running slot=ota_0 state=valid tag='A'
+   I (1506) lora: OTAA: DevEUI=3cdc75fffe6f85dc … [creds:NVS]
+   I (1518) app: field app: REAL Modbus MFM384 … 60s interval [cfg:NVS]
+   ```
+   `[creds:NVS]` + `[cfg:NVS]` confirm the 7d provisioning survived the partition change.
+
+2. *OTA to ota_1, marks valid, survives reset.* Staged build **B** into ota_1 (`parttool
+   write_partition --partition-name ota_1 --input app_B.bin`), `ota-activate 1`:
+   ```
+   OK boot -> ota_1 (pending-verify, rollback armed) — restarting
+   W (940) ota: ota_1 marked VALID (was pending-verify): ESP_OK
+   W (879) ota: running slot=ota_1 state=valid tag='B'   ← after reset #1 AND #2 (persisted)
+   ```
+
+3. *Bad image rolls back.* Staged the **BAD** image (`abort()` before mark-valid) into the inactive
+   ota_0, `ota-activate 0`:
+   ```
+   OK boot -> ota_0 (pending-verify, rollback armed) — restarting
+   E (849) app: DEBUG: bad OTA image — aborting before mark-valid (7c rollback test)
+   abort() was called at PC 0x42007c67 on core 0
+   W (903) ota: running slot=ota_1 state=valid tag='B'   ← bootloader rolled back to the good slot
+   ```
+   Node fully recovered on ota_1/B: `[creds:NVS]` join + `uplink OK`; `ota-status` →
+   `running=ota_1 boot=ota_1 next-slot=ota_0`.
+
+**Result: 7c GREEN.** Dual-slot + rollback proven on hardware; nvs/provisioning preserved across the
+layout change. Default (tag A) re-flashed → clean `running slot=ota_0 state=valid` production state.
+Production binary SHA-256 `5d503aced11a6dba1f0572e0af414b3ac1e0c47eaf75cbf9bb3bde972ec3da11`.
+**Deferred (OQ-10):** the network OTA downloader (WiFi/HTTPS, then FUOTA) — blocked on bench WiFi
+creds; the partition/rollback foundation it would sit on is now in place.
+
+**Lessons.**
+- *Keep nvs put across a partition change.* Holding nvs at its existing offset/size turned a
+  "forces a full erase" step into a non-destructive flash — provisioning + LoRaWAN nonces survived,
+  no re-join, no re-provision. Worth designing the table around.
+- *`SDKCONFIG_DEFAULTS` cache stickiness bites again.* After building with an overlay, a plain
+  `idf.py build` reused the cached overlay path and silently produced a **BAD** image labelled as the
+  default. Always `fullclean` (or pass `-DSDKCONFIG_DEFAULTS=` explicitly) when switching back to the
+  production config, and verify `CONFIG_APP_BUILD_TAG` / `CONFIG_APP_DEBUG_OTA_BAD` before flashing.
+- *linenoise eats the first command.* Over a script the REPL enters dumb mode on first contact and
+  swallows the first line; send a throwaway `ota-status` to prime it before the real command.
+
+## Phase 7b — Power: light-sleep duty-cycling (2026-06-25) · IMPLEMENTED, power-gate deferred
+
+**Goal (7b).** Cut average current by light-sleeping between samples. Per operator decision this pass
+is **functional only, no current target** (OQ-12 open) — a true average-current measurement needs the
+board on DC/battery with USB removed, which wasn't set up.
+
+**Implementation.** `CONFIG_APP_LIGHT_SLEEP` (Kconfig, **default OFF**). When on, `wdt_fed_delay()`
+makes each ≤2 s chunk a manual `esp_light_sleep_start()` (timer wakeup) instead of `vTaskDelay` —
+RAM is retained so the LoRaWAN session survives with no re-join. Chunking keeps the task watchdog
+fed; the **idle-task watchdog is disabled when light-sleep is on** (manual light-sleep freezes idle
+by design, so watching it would false-trip). `field_wdt_arm()` sets `idle_core_mask=0` in that case.
+
+**KEY FINDING — light-sleep wedges the node on USB power (VBUS present).** On this ESP32-S3 with the
+USB-Serial-JTAG console and VBUS applied, the node runs cycle 0, enters light-sleep, and then
+**`esptool` itself can no longer connect** ("No serial data received") — a genuine device-level wedge,
+not just a dark console. Recovery required **plug-in-while-holding SW2(BOOT)** → USB download mode →
+reflash a light-sleep-OFF image. (Plain power-cycle and BOOT+RESET-then-replug were not enough; the
+clean download-on-plug was.) This is why `APP_LIGHT_SLEEP` defaults OFF: **enable + verify only on a
+DC/battery bench with USB disconnected** — which is also the only setup that measures true average
+current (OQ-12). Field nodes run on battery (no VBUS), where light-sleep is expected to behave.
+
+**KEY FINDING — pyserial DTR/RTS held the chip in reset.** Opening the USB-Serial-JTAG port with
+pyserial's default `dtr=True/rts=True` drives BOOT/EN and **holds the ESP32-S3 in reset/download** →
+"console produces 0 bytes" even on a healthy device. Fix: open with `dtr=False, rts=False`
+(`serial.Serial()` then set before/after open). This cost real time masquerading as a device hang.
+
+**What was verified (HIL, project board, light-sleep OFF baseline).** Recovered node: `boot #38`,
+OTA layout intact (`ota_0` valid, tag A), `[creds:NVS]`, `session restored`, `field app: REAL Modbus
+RS-FSJT … 4800 8N1, 20s [cfg:NVS]`, **two+ cycles** (`[0]`@2.0 s + uplink@4.4 s; `[1]`@24.9 s +
+uplink@27.4 s) — continuous field-loop operation, uplinks, session-preservation, monotonic timer (no
+reboot). This is the busy-wait baseline; light-sleep *cycling* could not be observed on USB (wedge).
+
+**RS-FSJT real read (Phase 6 follow-up).** With the wind sensor on CN1 the read **succeeded**
+pre-disturbance (`RS-FSJT wind=0.00 m/s` in still air, **no "read failed"** — contrast Phase 6's total
+silence) → the real read path is closed. After the recovery power-cycles the sensor went **stale**
+(`read failed`) — a bench/wiring state (re-seat + let it settle), not firmware.
+
+**Status: 7b IMPLEMENTED; functional cycling + average-current (OQ-12) DEFERRED to a DC/battery
+(no-VBUS) bench.** Default firmware is light-sleep OFF (the proven 7a/7c busy-wait behaviour);
+light-sleep is opt-in for the battery bench.
+
+**Lessons.** (1) Don't run light-sleep with the USB-Serial-JTAG console + VBUS — it wedges; verify on
+battery. (2) De-assert DTR/RTS when reading a USJ port from a script. (3) Recover a wedged USJ board
+with plug-in-while-holding-BOOT (download-on-plug), not just reset.
+
+## Session park — 2026-06-28 (7b rig + stepper scan; bench not ready)
+
+**Where we left off** (bench not set up; continuing tomorrow).
+
+**7b current-measurement rig (parked).** Plan B for the OQ-12 average current is an **INA238**
+high-side monitor read by a **Raspberry Pi** (`mcp-gateway`, 192.168.68.109, SSH key
+`id_ed25519_siot_dev_m5`). Tool `tools/ina238_current.py` is on the Pi at `~/ina238_current.py`
+(integrates true time-average over the duty cycle); Pi `i2c-1` enabled at runtime (**non-persistent**
+— re-run `sudo dtparam i2c_arm=on` after a reboot), `i2c-tools` installed. Procedure: power the rak
+via **P1 with USB unplugged** (no VBUS → light-sleep runs), INA in series, set `--rshunt` to the
+board's shunt, run. **Parked because:** bench not ready + the INA238 is in use on another project.
+The **light-sleep-ON** image is currently on the rak board → USB is wedge-prone; if `esptool` can't
+connect, recover via **plug-in-while-holding-SW2(BOOT)** → download mode → reflash.
+
+**Stepper motion control — MOVED OUT (2026-06-28).** The LEESN IG28ET stepper *motion control* work
+(Modbus FC06/FC16 writes, jog/goto/dump bench console, and the decoded LEESN register map) now lives
+in its own repo — **`rnd-southerniot/leesn-stepper-control`**. This repo (`rak3112-rs485-node`) is
+**RS-485 sensor *reading* only** (FC03/FC04 for meters/sensors → LoRaWAN); the write/motion code was
+reverted out (revert of `f6afb2e`). Do **not** add motor-write/jog code back here — extend the
+motion-control repo instead. The shared Modbus framing was *copied* (not linked); port any framing fix
+across both.
+
+**New team tooling this session:** `docs/prompts/add-sensor-from-datasheet.md` (generate a sensor's
+read/sim/payload from a datasheet + proven Arduino code — Arduino is ground-truth for wire details).
+
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 
 After Phase 2 sign-off, a code-review pass found a residual `<TBD>` placeholder in the

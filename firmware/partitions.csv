@@ -1,0 +1,9 @@
+# rak3112-rs485-node partition table — Phase 7c (dual-slot OTA + rollback), 16 MB flash.
+# nvs kept at the default 0x9000/0x6000 so provisioning ('prov') + LoRaWAN nonces ('lorawan')
+# survive the layout change (no full erase needed). App slots are 3 MB each (app ~0.4 MB).
+# Name,     Type, SubType, Offset,    Size,     Flags
+nvs,        data, nvs,     0x9000,    0x6000,
+otadata,    data, ota,     0xf000,    0x2000,
+phy_init,   data, phy,     0x11000,   0x1000,
+ota_0,      app,  ota_0,   0x20000,   0x300000,
+ota_1,      app,  ota_1,   0x320000,  0x300000,

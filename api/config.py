@@ -9,10 +9,16 @@ Source: .planning/phases/01-firmware-service-in-cluster-b/01-PATTERNS.md
 """
 from functools import lru_cache
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
     API_TOKEN: str
     MINIO_INTERNAL_ENDPOINT: str = "minio.storage.svc.cluster.local:80"
     MINIO_EXTERNAL_ENDPOINT: str = "10.10.8.171:30900"
@@ -21,10 +27,6 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "firmware-artifacts"
     FIRMWARE_TAG: str = "phase-6-modbus-green"
     PRESIGNED_EXPIRY_HOURS: int = 1
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 @lru_cache()

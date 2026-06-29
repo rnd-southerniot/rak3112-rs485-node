@@ -218,8 +218,8 @@ def minio_mock():
         uploaded_keys.add(key)
         return MagicMock(etag="fake-etag")
 
-    def _presigned_get_object(bucket: str, key: str, **kwargs):
-        return f"http://minio-test:9000/{bucket}/{key}?presigned=1"
+    def _presigned_get_object(bucket_name: str, object_name: str, **kwargs):
+        return f"http://minio-test:9000/{bucket_name}/{object_name}?presigned=1"
 
     mock.stat_object.side_effect = _stat_object
     mock.fput_object.side_effect = _fput_object

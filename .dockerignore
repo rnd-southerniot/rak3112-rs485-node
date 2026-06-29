@@ -1,0 +1,89 @@
+# .dockerignore — RAK3112 Firmware Service
+#
+# Excludes build-context noise, development tooling, and secrets from the Docker
+# build context. Key security rule: firmware/main/lora_credentials.h MUST NOT
+# enter the build context (D-07); the Dockerfile also explicitly COPYs
+# lora_credentials.h.example over this path as defence-in-depth.
+#
+# What the build context DOES include (not listed here):
+#   firmware/            — ESP-IDF source (minus build/ and the real creds file)
+#   api/                 — FastAPI application package
+#   device-profiles/     — Device profile JSON registry
+#   requirements.txt     — Runtime Python dependencies
+
+# ---------------------------------------------------------------------------
+# Version control history (not needed — only source files are needed)
+# ---------------------------------------------------------------------------
+.git/
+
+# ---------------------------------------------------------------------------
+# D-07: Exclude any real lora_credentials.h from the build context.
+# The Dockerfile COPY-overrides this path with lora_credentials.h.example.
+# Both guards are required: .dockerignore prevents the real file from entering
+# the build context; the Dockerfile COPY ensures the placeholder is in place
+# even if the gitignored real file does not exist on disk.
+# ---------------------------------------------------------------------------
+firmware/main/lora_credentials.h
+
+# ---------------------------------------------------------------------------
+# ESP-IDF build artifacts — rebuilt fresh inside the builder stage.
+# Exclude prior local build outputs to keep the context small and reproducible.
+# ---------------------------------------------------------------------------
+firmware/build/
+firmware/managed_components/
+firmware/dependencies.lock
+firmware/sdkconfig
+firmware/sdkconfig.old
+
+# ---------------------------------------------------------------------------
+# Python runtime artifacts (generated at build or test time)
+# ---------------------------------------------------------------------------
+.v/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+logs/
+
+# ---------------------------------------------------------------------------
+# Development tooling and configuration (not needed in the image)
+# ---------------------------------------------------------------------------
+.github/
+.planning/
+.claude/
+.code-review-graph/
+.pre-commit-config.yaml
+.gitleaks.toml
+.clang-format
+.mcp.json
+
+# ---------------------------------------------------------------------------
+# Source directories not needed in the image
+# ---------------------------------------------------------------------------
+tools/
+hardware/
+tests/
+deploy/
+
+# ---------------------------------------------------------------------------
+# Development-only dependencies and secrets
+# ---------------------------------------------------------------------------
+requirements-dev.txt
+.env
+.env.local
+*.key
+*.pem
+secrets/
+
+# ---------------------------------------------------------------------------
+# macOS / editor clutter
+# ---------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+.idea/
+.vscode/
+*.swp
+*.swo

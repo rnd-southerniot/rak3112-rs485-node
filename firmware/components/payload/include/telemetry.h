@@ -20,6 +20,9 @@ typedef enum {
 /* Payload schema version — payload byte 0. Bump on ANY field/layout/scaling change. */
 #define TELEMETRY_SCHEMA_VERSION 0x01u
 
+/* Common header length: [schema][device-type][flags]. */
+#define TELEMETRY_HEADER_LEN 3u
+
 /* Flags — payload byte 2 (bitfield). */
 #define TELEMETRY_FLAG_SIMULATED 0x01u /* values synthesized, not read from a real device */
 #define TELEMETRY_FLAG_STALE 0x02u     /* last Modbus read failed; values may be stale/zero */

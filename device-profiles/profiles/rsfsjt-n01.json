@@ -1,0 +1,42 @@
+{
+  "profile_id": "rsfsjt-n01",
+  "schema_version": 1,
+  "device": {
+    "manufacturer": "Renke",
+    "model": "RS-FSJT-N01",
+    "category": "wind-sensor",
+    "type_byte": 2
+  },
+  "bus": { "baud": 4800, "parity": "N", "data_bits": 8, "stop_bits": 1 },
+  "defaults": { "function_code": 3, "word_order": "ABCD" },
+  "scan": {
+    "function_code": 3,
+    "register": 0,
+    "quantity": 1,
+    "match": "any-reply",
+    "note": "FC03 reg 40001 (wire 0) wind-speed register; proven on hardware (Phase 6c)."
+  },
+  "measurands": [
+    { "key": "wind", "name": "Wind speed", "unit": "m/s", "function_code": 3, "register": 0, "type": "u16", "scale": 0.1 }
+  ],
+  "payload": {
+    "device_byte": 2,
+    "total_len": 5,
+    "fields": [
+      { "key": "wind", "offset": 0, "encoding": "u16", "scale": 100 }
+    ]
+  },
+  "provisioning": {
+    "slave_id_source": "scan",
+    "note": "Default unit ID 1; discovered by scan at commissioning."
+  },
+  "source": {
+    "repo": "rnd-southerniot/rak3112-rs485-node",
+    "commit": "phase-6-modbus-green",
+    "firmware_c": "firmware/components/meter/meter.c (meter_read_rsfsjt) + payload.c (payload_encode_rsfsjt)"
+  },
+  "conflicts": [
+    "Authored to match the compiled Phase-6c RS-FSJT path byte-for-byte (device 0x02, FC03 reg 0, raw/10 = m/s, payload wind x100 u16) so the profile-driven reader can be validated byte-identical against the compiled path on real hardware.",
+    "RS-FSJT scale raw/10 = m/s confirmed on bench 2026-06-24 (blow test); a /100 variant exists on some units."
+  ]
+}

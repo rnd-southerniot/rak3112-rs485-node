@@ -89,3 +89,26 @@ void meter_sim_rsfsjt(uint32_t tick, rsfsjt_sample_t *out)
     const float ph = (float)tick * 0.20f;
     out->wind_mps = 5.0f + 4.5f * sinf(ph); /* 0.5 .. 9.5 m/s */
 }
+
+esp_err_t meter_read_profile(uart_port_t port, uint8_t unit, const device_profile_t *p,
+                             float *values, size_t n_values)
+{
+    if (p == NULL || values == NULL || n_values < p->n_meas) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t result = ESP_OK;
+    for (uint8_t i = 0; i < p->n_meas; ++i) {
+        const dp_measurand_t *m = &p->meas[i];
+        const uint8_t fc = m->fc ? m->fc : p->default_fc;
+        const uint16_t qty = dp_dtype_regs(m->type);
+        uint16_t regs[2] = {0, 0};
+        uint8_t exc = 0;
+        if (modbus_master_read(port, unit, fc, m->reg, qty, 500, regs, &exc) != MODBUS_OK) {
+            values[i] = 0.0f;
+            result = ESP_FAIL;
+            continue;
+        }
+        values[i] = dp_decode(regs, m->type, m->word, m->scale, m->offset);
+    }
+    return result;
+}

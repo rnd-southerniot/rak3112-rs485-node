@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rnd-southerniot/rak3112-rs485-node/device-profiles/schema.json",
+  "title": "rak3112-rs485-node device profile",
+  "description": "Machine-readable Modbus device profile served by crm.siot.solutions for auto-provisioning and consumed by the node firmware. Carries everything needed to talk to a device EXCEPT the Modbus slave/unit ID, which is discovered at commissioning by the node's bus-scan (the same device model has different unit IDs at different client sites).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profile_id", "schema_version", "device", "bus", "defaults", "scan", "measurands", "payload", "provisioning", "source"],
+  "properties": {
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Stable kebab-case id, e.g. selec-mfm384."
+    },
+    "schema_version": { "type": "integer", "const": 1 },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manufacturer", "model", "category", "type_byte"],
+      "properties": {
+        "manufacturer": { "type": "string" },
+        "model": { "type": "string" },
+        "category": { "type": "string", "enum": ["energy-meter", "generator-controller", "wind-sensor", "other"] },
+        "type_byte": {
+          "type": "integer", "minimum": 1, "maximum": 255,
+          "description": "ADR-005 payload device-type byte. UNIFIED REGISTRY (must stay unique across all profiles + the rak3112-rs485-node firmware): 1=Selec MFM384, 2=RS-FSJT-N01 wind, 3=Honeywell EEM400, 4=Deep Sea controller."
+        }
+      }
+    },
+    "bus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baud", "parity", "data_bits", "stop_bits"],
+      "properties": {
+        "baud": { "type": "integer", "enum": [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200] },
+        "parity": { "type": "string", "enum": ["N", "E", "O"] },
+        "data_bits": { "type": "integer", "const": 8 },
+        "stop_bits": { "type": "integer", "enum": [1, 2] }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["function_code", "word_order"],
+      "properties": {
+        "function_code": { "type": "integer", "enum": [3, 4], "description": "3=read holding, 4=read input registers." },
+        "word_order": { "type": "string", "enum": ["ABCD", "CDAB", "BADC", "DCBA"], "description": "Word/byte order for 32-bit values; per-measurand override allowed." }
+      }
+    },
+    "scan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["function_code", "register", "quantity", "match"],
+      "description": "How the node discovers the slave ID: probe this register across candidate unit IDs; the matching rule decides 'present'.",
+      "properties": {
+        "function_code": { "type": "integer", "enum": [3, 4] },
+        "register": { "type": "integer", "minimum": 0 },
+        "quantity": { "type": "integer", "minimum": 1 },
+        "match": { "type": "string", "enum": ["any-reply", "crc-valid"], "description": "any-reply = a CRC-valid response OR a Modbus exception proves presence (only a timeout = absent)." },
+        "note": { "type": "string" }
+      }
+    },
+    "measurands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "name", "unit", "function_code", "register", "type", "scale"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          "name": { "type": "string" },
+          "unit": { "type": "string" },
+          "function_code": { "type": "integer", "enum": [3, 4] },
+          "register": { "type": "integer", "minimum": 0, "description": "Wire (0-based) start address." },
+          "type": { "type": "string", "enum": ["u16", "i16", "u32", "i32", "float32"] },
+          "word_order": { "type": "string", "enum": ["ABCD", "CDAB", "BADC", "DCBA"], "description": "Override defaults.word_order for 32-bit/float types." },
+          "scale": { "type": "number", "description": "engineering_value = raw * scale + offset." },
+          "offset": { "type": "number", "default": 0 },
+          "accumulating": { "type": "boolean", "default": false, "description": "Monotonic counter (energy, run-time)." }
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device_byte", "total_len", "fields"],
+      "description": "ADR-005 uplink mapping (after the 3-byte [schema][device][flags] header). total_len includes the header and must fit AS923 DR3 (<=53).",
+      "properties": {
+        "device_byte": { "type": "integer", "minimum": 1, "maximum": 255 },
+        "total_len": { "type": "integer", "minimum": 3, "maximum": 53 },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "offset", "encoding", "scale"],
+            "properties": {
+              "key": { "type": "string", "description": "Matches a measurands[].key." },
+              "offset": { "type": "integer", "minimum": 0, "description": "Byte offset within the body (after the 3-byte header)." },
+              "encoding": { "type": "string", "enum": ["u8", "i8", "u16", "i16", "u32", "i32"] },
+              "scale": { "type": "number", "description": "wire = round(engineering_value * scale); decoder divides." }
+            }
+          }
+        }
+      }
+    },
+    "provisioning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slave_id_source"],
+      "properties": {
+        "slave_id_source": { "type": "string", "const": "scan", "description": "Slave/unit ID is NOT in this profile; the node bus-scan discovers it at commissioning." },
+        "note": { "type": "string" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "commit"],
+      "properties": {
+        "repo": { "type": "string" },
+        "commit": { "type": "string" },
+        "arduino": { "type": "string" },
+        "datasheet": { "type": "string" },
+        "firmware_c": { "type": "string" }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Arduino-vs-datasheet discrepancies, Arduino (wire) wins. Carried over from the reference conflict logs."
+    }
+  }
+}

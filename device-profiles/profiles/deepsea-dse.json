@@ -1,0 +1,86 @@
+{
+  "profile_id": "deepsea-dse",
+  "schema_version": 1,
+  "device": {
+    "manufacturer": "Deep Sea Electronics",
+    "model": "DSE73xx/86xx genset controller",
+    "category": "generator-controller",
+    "type_byte": 4
+  },
+  "bus": { "baud": 115200, "parity": "N", "data_bits": 8, "stop_bits": 2 },
+  "defaults": { "function_code": 3, "word_order": "ABCD" },
+  "scan": {
+    "function_code": 3,
+    "register": 1027,
+    "quantity": 1,
+    "match": "any-reply",
+    "note": "FC03 reg 1027 (fuel level) - a single-register live read. DSE uses absolute addresses verbatim (no R-1). Slave IDs seen: 10/11/12."
+  },
+  "measurands": [
+    { "key": "fuel_pct",      "name": "Fuel level",            "unit": "%",   "function_code": 3, "register": 1027, "type": "u16", "scale": 1.0 },
+    { "key": "batt_v",        "name": "Engine battery voltage","unit": "V",   "function_code": 3, "register": 1029, "type": "u16", "scale": 0.1 },
+    { "key": "engine_rpm",    "name": "Engine speed",          "unit": "rpm", "function_code": 3, "register": 1030, "type": "u16", "scale": 1.0 },
+    { "key": "gen_freq_hz",   "name": "Generator frequency",   "unit": "Hz",  "function_code": 3, "register": 1031, "type": "u16", "scale": 0.1 },
+    { "key": "gen_l1n_v",     "name": "Generator L1-N voltage","unit": "V",   "function_code": 3, "register": 1032, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "gen_l2n_v",     "name": "Generator L2-N voltage","unit": "V",   "function_code": 3, "register": 1034, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "gen_l3n_v",     "name": "Generator L3-N voltage","unit": "V",   "function_code": 3, "register": 1036, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "gen_l1l2_v",    "name": "Generator L1-L2 voltage","unit": "V",  "function_code": 3, "register": 1038, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "gen_l2l3_v",    "name": "Generator L2-L3 voltage","unit": "V",  "function_code": 3, "register": 1040, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "gen_l3l1_v",    "name": "Generator L3-L1 voltage","unit": "V",  "function_code": 3, "register": 1042, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "mains_freq_hz", "name": "Mains frequency",       "unit": "Hz",  "function_code": 3, "register": 1059, "type": "u16", "scale": 0.1 },
+    { "key": "mains_l1n_v",   "name": "Mains L1-N voltage",    "unit": "V",   "function_code": 3, "register": 1060, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "mains_l2n_v",   "name": "Mains L2-N voltage",    "unit": "V",   "function_code": 3, "register": 1062, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "mains_l3n_v",   "name": "Mains L3-N voltage",    "unit": "V",   "function_code": 3, "register": 1064, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "mains_l1l2_v",  "name": "Mains L1-L2 voltage",   "unit": "V",   "function_code": 3, "register": 1066, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "mains_l2l3_v",  "name": "Mains L2-L3 voltage",   "unit": "V",   "function_code": 3, "register": 1068, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "mains_l3l1_v",  "name": "Mains L3-L1 voltage",   "unit": "V",   "function_code": 3, "register": 1070, "type": "u32", "word_order": "ABCD", "scale": 0.1 },
+    { "key": "gen_total_w",   "name": "Generator total power", "unit": "W",   "function_code": 3, "register": 1536, "type": "i32", "word_order": "ABCD", "scale": 1.0 },
+    { "key": "gen_avg_pf",    "name": "Generator avg power factor","unit": "","function_code": 3, "register": 1557, "type": "i16", "scale": 0.1 },
+    { "key": "gen_pct_power", "name": "Generator % of full power","unit": "%","function_code": 3, "register": 1630, "type": "i16", "scale": 0.1 },
+    { "key": "engine_run_s",  "name": "Engine run time",       "unit": "s",   "function_code": 3, "register": 1798, "type": "u32", "word_order": "ABCD", "scale": 1.0, "accumulating": true }
+  ],
+  "payload": {
+    "device_byte": 4,
+    "total_len": 47,
+    "fields": [
+      { "key": "fuel_pct",      "offset": 0,  "encoding": "u8",  "scale": 1 },
+      { "key": "batt_v",        "offset": 1,  "encoding": "u16", "scale": 10 },
+      { "key": "engine_rpm",    "offset": 3,  "encoding": "u16", "scale": 1 },
+      { "key": "gen_freq_hz",   "offset": 5,  "encoding": "u16", "scale": 10 },
+      { "key": "gen_l1n_v",     "offset": 7,  "encoding": "u16", "scale": 10 },
+      { "key": "gen_l2n_v",     "offset": 9,  "encoding": "u16", "scale": 10 },
+      { "key": "gen_l3n_v",     "offset": 11, "encoding": "u16", "scale": 10 },
+      { "key": "gen_l1l2_v",    "offset": 13, "encoding": "u16", "scale": 10 },
+      { "key": "gen_l2l3_v",    "offset": 15, "encoding": "u16", "scale": 10 },
+      { "key": "gen_l3l1_v",    "offset": 17, "encoding": "u16", "scale": 10 },
+      { "key": "mains_freq_hz", "offset": 19, "encoding": "u16", "scale": 10 },
+      { "key": "mains_l1n_v",   "offset": 21, "encoding": "u16", "scale": 10 },
+      { "key": "mains_l2n_v",   "offset": 23, "encoding": "u16", "scale": 10 },
+      { "key": "mains_l3n_v",   "offset": 25, "encoding": "u16", "scale": 10 },
+      { "key": "mains_l1l2_v",  "offset": 27, "encoding": "u16", "scale": 10 },
+      { "key": "mains_l2l3_v",  "offset": 29, "encoding": "u16", "scale": 10 },
+      { "key": "mains_l3l1_v",  "offset": 31, "encoding": "u16", "scale": 10 },
+      { "key": "gen_total_w",   "offset": 33, "encoding": "i32", "scale": 1 },
+      { "key": "gen_avg_pf",    "offset": 37, "encoding": "i8",  "scale": 100 },
+      { "key": "gen_pct_power", "offset": 38, "encoding": "i16", "scale": 10 },
+      { "key": "engine_run_s",  "offset": 40, "encoding": "u32", "scale": 1 }
+    ]
+  },
+  "provisioning": {
+    "slave_id_source": "scan",
+    "note": "Controller slave ID is site-configured (10/11/12 observed); discovered by scan at commissioning."
+  },
+  "source": {
+    "repo": "RedwanRifat07/modbus-simulated-dataset",
+    "commit": "ac6cd3fb02b8423f0bac5b746867d8f038b620bf",
+    "arduino": "arduino-code/Deep-Sea-code.ino",
+    "datasheet": "datasheets/deep-sea-register-addredss.pdf",
+    "firmware_c": "firmware/components/meter/meter_dse.c"
+  },
+  "conflicts": [
+    "[C1] Arduino voltage-channel LABELS are wrong (Mains<->Gen mixups, mis-numbered phases) for the 1032-1070 range; register ADDRESSES are correct and proven. Names here follow the datasheet.",
+    "[C2] gen_total_w (reg 1536) is 32S signed per datasheet; Arduino read it unsigned. Typed i32 here so export/import sign is correct.",
+    "[C3] gen_avg_pf (1557) and gen_pct_power (1630) are 16S signed per datasheet; Arduino read them unsigned. Typed i16 here.",
+    "Bus is 8N2 (two stop bits) - distinct from the meters' 8N1/8E1."
+  ]
+}

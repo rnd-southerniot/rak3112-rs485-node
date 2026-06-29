@@ -344,6 +344,18 @@ static void load_field_cfg(field_cfg_t *c)
     }
 }
 
+/* Persist a scan-discovered Modbus slave ID into NVS 'prov' so the next boot skips the scan. */
+static void persist_unit(uint8_t unit)
+{
+    nvs_handle_t h;
+    if (nvs_open("prov", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, "unit", unit);
+        nvs_commit(h);
+        nvs_close(h);
+        ESP_LOGI(TAG, "persisted discovered unit %u to NVS", (unsigned)unit);
+    }
+}
+
 /*
  * Field application: sample the configured device (real Modbus or simulated) then LoRaWAN-uplink a
  * compact ADR-005 payload, every interval. Config from NVS 'prov' (else Kconfig). Assumes lora is
@@ -380,11 +392,27 @@ static void run_field_app(void)
     };
     ESP_ERROR_CHECK(rs485_init(&rcfg));
     if (have_profile) {
+        /* Auto-discover the slave ID (ADR-006 incr 4): the profile omits it (varies per site). Try
+         * the configured unit first (fast), else scan the bus; persist the discovery for next boot.
+         */
+        int found = meter_scan_for_unit(UART_NUM_1, prof, cfg.unit, cfg.unit, 300);
+        if (found < 0) {
+            ESP_LOGW(TAG, "configured unit %u silent — scanning bus 1..%d for the device...",
+                     (unsigned)cfg.unit, CONFIG_APP_FIELD_SCAN_ID_HI);
+            found =
+                meter_scan_for_unit(UART_NUM_1, prof, 1, (uint8_t)CONFIG_APP_FIELD_SCAN_ID_HI, 300);
+        }
+        if (found > 0) {
+            if ((uint8_t)found != cfg.unit) {
+                persist_unit((uint8_t)found);
+            }
+            cfg.unit = (uint8_t)found;
+        }
         ESP_LOGI(TAG,
-                 "field app: PROFILE-DRIVEN device_byte=0x%02X, %u measurands, unit %u @ %lu %s, "
+                 "field app: PROFILE-DRIVEN device_byte=0x%02X, %u measurands, unit %u%s @ %lu %s, "
                  "%lus interval",
-                 prof->device_byte, prof->n_meas, (unsigned)cfg.unit, (unsigned long)cfg.baud,
-                 parity_label(cfg.parity), (unsigned long)cfg.interval_s);
+                 prof->device_byte, prof->n_meas, (unsigned)cfg.unit, found > 0 ? "" : " (none!)",
+                 (unsigned long)cfg.baud, parity_label(cfg.parity), (unsigned long)cfg.interval_s);
     } else {
         ESP_LOGI(TAG, "field app: REAL Modbus %s, unit %u @ %lu %s, %lus interval [cfg:%s]",
                  dev_name, (unsigned)cfg.unit, (unsigned long)cfg.baud, parity_label(cfg.parity),

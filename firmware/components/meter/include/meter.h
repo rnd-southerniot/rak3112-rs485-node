@@ -40,4 +40,13 @@ void meter_sim_rsfsjt(uint32_t tick, rsfsjt_sample_t *out);
 esp_err_t meter_read_profile(uart_port_t port, uint8_t unit, const device_profile_t *p,
                              float *values, size_t n_values);
 
+/*
+ * Discover the Modbus slave ID on the bus (ADR-006 increment 4). Probes unit IDs [id_lo..id_hi]
+ * with the profile's scan params (scan_fc/scan_reg/scan_qty); a CRC-valid reply OR a Modbus
+ * exception counts as present (only a timeout = absent). Returns the first responding ID, or -1 if
+ * none answered. Probe a single ID by passing id_lo == id_hi.
+ */
+int meter_scan_for_unit(uart_port_t port, const device_profile_t *p, uint8_t id_lo, uint8_t id_hi,
+                        uint32_t timeout_ms);
+
 #endif /* METER_H */

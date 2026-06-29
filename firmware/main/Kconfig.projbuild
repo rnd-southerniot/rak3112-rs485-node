@@ -139,6 +139,16 @@ config APP_FIELD_SAMPLE_INTERVAL_S
     help
         AS923 dwell + fair-use friendly. Keep >= 60 for normal operation.
 
+config APP_FIELD_SCAN_ID_HI
+    int "Field app: profile-driven auto-scan highest unit ID"
+    range 1 247
+    default 32
+    help
+        When a device profile is provisioned (ADR-006), the node discovers the Modbus slave ID by
+        probing the configured unit first, then scanning 1..this if it is silent. The profile omits
+        the slave ID because it varies per client site. Raise toward 247 only if devices may sit at
+        high addresses (a full sweep is slower at boot).
+
 # ---------------------------------------------------------------------------
 # Phase 7a — resilience: task-watchdog timeout + a debug starve path for the gate.
 # ---------------------------------------------------------------------------

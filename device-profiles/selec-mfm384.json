@@ -1,0 +1,16 @@
+{
+  "profileKey": "selec-mfm384",
+  "displayName": "SELEC MFM384 3-Phase Energy Meter",
+  "manufacturer": "SELEC",
+  "model": "MFM384",
+  "deviceByte": 1,
+  "modbus": {
+    "baud": 9600,
+    "parity": "N",
+    "stopBits": 1,
+    "functionCode": 4,
+    "wordOrder": "CDAB"
+  },
+  "payloadBytes": 19,
+  "isActive": true
+}

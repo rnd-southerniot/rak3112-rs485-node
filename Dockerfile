@@ -42,7 +42,7 @@ WORKDIR /build/firmware
 # idf_component.yml declares jgromes/radiolib==7.7.1 — the component manager downloads
 # it from components.espressif.com at build time (internet required; see Pitfall 3).
 # Output: build/rak3112_rs485_node.bin (project name from firmware/CMakeLists.txt).
-RUN idf.py set-target esp32s3 && idf.py build
+RUN export IDF_PATH_FORCE=1 && . "$IDF_PATH/export.sh" && idf.py set-target esp32s3 && idf.py build
 
 # Generate compiled_readers.json: regex-extract meter_read_<suffix>( declarations from
 # meter.h. These suffixes (e.g. "mfm384", "rsfsjt") are the authoritative signal for

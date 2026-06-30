@@ -1,22 +1,96 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "nvs.h"
 #include "sdkconfig.h"
 
 #include "gpio_remap.h"
 #include "lora.h"
 #include "meter.h"
 #include "payload.h"
+#include "prov_console.h"
 #if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT || !CONFIG_APP_FIELD_SIMULATE
 #include "modbus_master.h"
 #include "rs485.h"
 #endif
 
 static const char *TAG = "app";
+
+/* -------------------------------------------------------------------------
+ * Phase 7: Modbus config from NVS (written by "prov modbus").
+ * Falls back to Kconfig defaults when NVS keys are absent.
+ * ------------------------------------------------------------------------- */
+#define MODBUS_NVS_NS "modbus"
+
+typedef struct {
+    int            baud;
+    uart_parity_t  parity;
+    int            stop_bits;
+    uint8_t        slave_id;
+    bool           from_nvs;
+} modbus_nvs_cfg_t;
+
+/* Read modbus config from NVS namespace "modbus". Kconfig defaults are used
+ * for any key that is absent. Logs a "[modbus]" boot-verify marker. */
+static modbus_nvs_cfg_t read_modbus_nvs_cfg(void)
+{
+    modbus_nvs_cfg_t cfg = {
+        .baud      = CONFIG_APP_FIELD_BAUD,
+        .parity    = UART_PARITY_DISABLE,
+        .stop_bits = 1,
+        .slave_id  = (uint8_t)CONFIG_APP_FIELD_UNIT,
+        .from_nvs  = false,
+    };
+
+    nvs_handle_t h;
+    if (nvs_open(MODBUS_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        ESP_LOGI(TAG, "[modbus] compiled defaults: baud=%d 8N1 slave=%u",
+                 cfg.baud, (unsigned)cfg.slave_id);
+        return cfg;
+    }
+
+    char buf[32];
+    size_t len;
+
+    len = sizeof(buf);
+    if (nvs_get_str(h, "modbus_baud", buf, &len) == ESP_OK)
+        cfg.baud = atoi(buf);
+
+    len = sizeof(buf);
+    if (nvs_get_str(h, "modbus_parity", buf, &len) == ESP_OK) {
+        if (buf[0] == 'E' || buf[0] == 'e')      cfg.parity = UART_PARITY_EVEN;
+        else if (buf[0] == 'O' || buf[0] == 'o') cfg.parity = UART_PARITY_ODD;
+        else                                       cfg.parity = UART_PARITY_DISABLE;
+    }
+
+    len = sizeof(buf);
+    if (nvs_get_str(h, "modbus_stop", buf, &len) == ESP_OK)
+        cfg.stop_bits = atoi(buf);
+
+    len = sizeof(buf);
+    if (nvs_get_str(h, "modbus_slave", buf, &len) == ESP_OK)
+        cfg.slave_id = (uint8_t)atoi(buf);
+
+    nvs_close(h);
+    cfg.from_nvs = true;
+
+    /* Boot-verify marker: "modbus" (lowercase) searched by WebSerial boot-verify. */
+    char parity_ch = (cfg.parity == UART_PARITY_EVEN) ? 'E'
+                   : (cfg.parity == UART_PARITY_ODD)  ? 'O' : 'N';
+    ESP_LOGI(TAG, "[modbus] NVS: baud=%d 8%c%d slave=%u",
+             cfg.baud, parity_ch, cfg.stop_bits, (unsigned)cfg.slave_id);
+    return cfg;
+}
+
+/* File-scope modbus config — populated in app_main() and used by run_field_app(). */
+static modbus_nvs_cfg_t s_modbus_cfg;
+/* ------------------------------------------------------------------------- */
 
 /* GPIO9/GPIO40 held deliberate-floating on V1.1 (ADR-001 EC-4/EC-9; Phase 3 carry-forward). */
 static void hold_reserved_pins_floating(void)
@@ -172,7 +246,9 @@ static void run_modbus_poll(void)
  */
 static void run_field_app(void)
 {
-    const uint8_t unit = (uint8_t)CONFIG_APP_FIELD_UNIT;
+    /* Phase 7: use NVS modbus config when available, else Kconfig defaults. */
+    const uint8_t unit = s_modbus_cfg.from_nvs ? s_modbus_cfg.slave_id
+                                                : (uint8_t)CONFIG_APP_FIELD_UNIT;
     const TickType_t period = pdMS_TO_TICKS(1000u * (uint32_t)CONFIG_APP_FIELD_SAMPLE_INTERVAL_S);
 
 #if !CONFIG_APP_FIELD_SIMULATE
@@ -181,13 +257,14 @@ static void run_field_app(void)
         .tx_gpio = PIN_RS485_TX,
         .rx_gpio = PIN_RS485_RX,
         .de_re_gpio = PIN_RS485_DE_RE,
-        .baud_rate = CONFIG_APP_FIELD_BAUD,
-        .parity = UART_PARITY_DISABLE,
+        .baud_rate = s_modbus_cfg.from_nvs ? s_modbus_cfg.baud : CONFIG_APP_FIELD_BAUD,
+        .parity    = s_modbus_cfg.from_nvs ? s_modbus_cfg.parity : UART_PARITY_DISABLE,
         .rx_buffer_size = 256,
     };
     ESP_ERROR_CHECK(rs485_init(&cfg));
-    ESP_LOGI(TAG, "field app: REAL Modbus, unit %u @ %d 8N1, %ds interval", (unsigned)unit,
-             CONFIG_APP_FIELD_BAUD, CONFIG_APP_FIELD_SAMPLE_INTERVAL_S);
+    ESP_LOGI(TAG, "field app: REAL modbus, unit %u @ %d %s %ds interval", (unsigned)unit,
+             cfg.baud_rate, s_modbus_cfg.from_nvs ? "(NVS)" : "(compiled)",
+             CONFIG_APP_FIELD_SAMPLE_INTERVAL_S);
 #else
     ESP_LOGW(TAG, "field app: SIMULATED data (no Modbus), %ds interval — uplinks flagged simulated",
              CONFIG_APP_FIELD_SAMPLE_INTERVAL_S);
@@ -248,7 +325,18 @@ void app_main(void)
     run_modbus_scan(); /* bench bring-up mode — does not return */
 #endif
 
+    /* Phase 7: initialise radio + NVS flash. NVS must be up before reading
+     * modbus config or starting the provisioning console. */
     ESP_ERROR_CHECK(lora_init());
+
+    /* Phase 7: read modbus config from NVS (populated by "prov modbus" command).
+     * Falls back to Kconfig defaults when absent. Logs "[modbus]" boot marker. */
+    s_modbus_cfg = read_modbus_nvs_cfg();
+
+    /* Phase 7: start the NVS provisioning REPL as a FreeRTOS background task.
+     * Runs concurrently with the join loop and field app.
+     * lora_init() ensures nvs_flash_init() was called before this point. */
+    ESP_ERROR_CHECK(prov_console_init());
 
     /* OTAA join with a few retries (do NOT abort/bootloop on RF failure during bring-up). */
     int joined = 0;

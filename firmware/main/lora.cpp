@@ -2,12 +2,19 @@
 
 #include <RadioLib.h>
 
+#include <string.h>
+#include <stdint.h>
+
 #include "EspHalS3.h"
 #include "esp_log.h"
 #include "gpio_remap.h"
 /* Real credentials header is gitignored (holds the AppKey secret, generated from firmware/.env).
  * Fall back to the committed placeholder template when it's absent (clean clone / CI build-check)
- * so the project always builds; placeholder creds cannot join a network. */
+ * so the project always builds; placeholder creds cannot join a network.
+ *
+ * Phase 7 NVS override: lora_join() checks NVS keys lorawan_deveui / lorawan_joineui /
+ * lorawan_appkey FIRST (written by the prov_console "prov creds" command). Compiled creds
+ * are only used when NVS keys are absent (first boot before provisioning). */
 #if defined(__has_include) && __has_include("lora_credentials.h")
 #include "lora_credentials.h"
 #else
@@ -51,6 +58,36 @@ static bool nvs_load(const char *key, uint8_t *buf, size_t len)
     return ok;
 }
 
+/* Load a NVS string key from LORA_NVS_NS (written by prov_console "prov creds"). */
+static bool nvs_load_str(const char *key, char *buf, size_t len)
+{
+    nvs_handle_t h;
+    bool ok = false;
+    if (nvs_open(LORA_NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        size_t n = len;
+        ok = (nvs_get_str(h, key, buf, &n) == ESP_OK);
+        nvs_close(h);
+    }
+    return ok;
+}
+
+/* Parse a hex string (e.g. "3CDC75FFFE6F8924") into a uint64_t MSB-first. */
+static uint64_t hex_str_to_u64(const char *s)
+{
+    return (uint64_t)strtoull(s, nullptr, 16);
+}
+
+/* Parse a hex string of 2*len chars into len bytes (MSB-first). */
+static bool hex_str_to_bytes(const char *s, uint8_t *out, size_t len)
+{
+    if (strlen(s) != len * 2) return false;
+    for (size_t i = 0; i < len; ++i) {
+        char pair[3] = { s[i * 2], s[i * 2 + 1], '\0' };
+        out[i] = (uint8_t)strtoul(pair, nullptr, 16);
+    }
+    return true;
+}
+
 extern "C" esp_err_t lora_init(void)
 {
     esp_err_t nv = nvs_flash_init();
@@ -79,10 +116,35 @@ extern "C" esp_err_t lora_init(void)
 
 extern "C" esp_err_t lora_join(void)
 {
-    ESP_LOGI(TAG, "OTAA: DevEUI=%016llx JoinEUI=%016llx", (unsigned long long)LORA_DEVEUI,
-             (unsigned long long)LORA_JOINEUI);
-    int16_t st =
-        s_node.beginOTAA(LORA_JOINEUI, LORA_DEVEUI, (uint8_t *)LORA_APPKEY, (uint8_t *)LORA_APPKEY);
+    /* --- Phase 7: load OTAA creds from NVS (written by "prov creds"), or fall back
+     * to compiled-in placeholders from lora_credentials.h.  Log the source so that
+     * the boot-verify step can detect "[creds:NVS]" in the boot log. */
+    uint64_t deveui  = LORA_DEVEUI;
+    uint64_t joineui = LORA_JOINEUI;
+    uint8_t  appkey[16];
+    memcpy(appkey, LORA_APPKEY, sizeof(appkey));
+
+    char s_deveui[32], s_joineui[32], s_appkey[64];
+    bool nvs_ok = nvs_load_str("lorawan_deveui",  s_deveui,  sizeof(s_deveui))  &&
+                  nvs_load_str("lorawan_joineui", s_joineui, sizeof(s_joineui)) &&
+                  nvs_load_str("lorawan_appkey",  s_appkey,  sizeof(s_appkey));
+
+    if (nvs_ok &&
+        strlen(s_deveui) == 16 && strlen(s_joineui) == 16 && strlen(s_appkey) == 32) {
+        deveui  = hex_str_to_u64(s_deveui);
+        joineui = hex_str_to_u64(s_joineui);
+        hex_str_to_bytes(s_appkey, appkey, 16);
+        /* Boot-verify marker: "[creds:NVS]" — searched for by the WebSerial spike. */
+        ESP_LOGI(TAG, "[creds:NVS] DevEUI=%016llx JoinEUI=%016llx",
+                 (unsigned long long)deveui, (unsigned long long)joineui);
+    } else {
+        ESP_LOGW(TAG, "[creds:compiled] DevEUI=%016llx JoinEUI=%016llx "
+                 "(no NVS creds — run 'prov creds' to provision)",
+                 (unsigned long long)deveui, (unsigned long long)joineui);
+    }
+    /* --- end Phase 7 cred load --- */
+
+    int16_t st = s_node.beginOTAA(joineui, deveui, appkey, appkey);
     if (st != RADIOLIB_ERR_NONE) {
         ESP_LOGE(TAG, "beginOTAA failed (%d)", st);
         return ESP_FAIL;

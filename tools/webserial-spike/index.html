@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<!--
+  webserial-spike/index.html — Throwaway browser prototype for Phase 7 de-risk (02-01).
+  DO NOT use in production — this is a validation spike only.
+  Production flasher lands in plan 02-08.
+
+  Serve over localhost (Web Serial requires HTTPS or localhost):
+    cd tools/webserial-spike && python3 -m http.server 8099
+  Open: http://localhost:8099
+
+  Hardware requirement: RAK3112 (ESP32-S3) over native USB.
+  CONFIRM board MAC before proceeding (guardrail §3 #1):
+    Expected project board: 3c:dc:75:6f:85:dc
+    Expected test board:    3c:dc:75:6f:89:24
+
+  Threat model (from 02-01-PLAN.md):
+    T-02-01: eraseAll:false enforced — never true, no erase_flash.
+    T-02-02: appKey NEVER logged to console/terminal.
+    T-02-03: binarySha256 verified before flash.
+    T-02-04: chip MAC confirmed before any write.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAK3112 WebSerial Flash Spike — Phase 7</title>
+  <style>
+    body { font-family: monospace; max-width: 900px; margin: 40px auto; padding: 0 20px;
+           background: #1a1a1a; color: #e0e0e0; }
+    h1 { color: #ffa500; }
+    h2 { color: #87ceeb; border-bottom: 1px solid #444; padding-bottom: 6px; }
+    .warn { background: #3a2a00; border: 1px solid #ffa500; padding: 10px; margin: 10px 0;
+            border-radius: 4px; }
+    .danger { background: #3a0000; border: 1px solid #ff4444; padding: 10px; margin: 10px 0;
+              border-radius: 4px; }
+    .section { background: #252525; border: 1px solid #444; padding: 16px;
+               margin: 16px 0; border-radius: 6px; }
+    input, select { background: #333; color: #e0e0e0; border: 1px solid #666;
+                    padding: 6px 10px; border-radius: 4px; font-family: monospace;
+                    width: 100%; box-sizing: border-box; margin: 4px 0; }
+    button { background: #1a6a1a; color: #fff; border: none; padding: 10px 20px;
+             border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 14px;
+             margin: 4px 2px; }
+    button:hover { background: #2a8a2a; }
+    button:disabled { background: #444; color: #888; cursor: not-allowed; }
+    button.danger { background: #8a1a1a; }
+    button.danger:hover { background: #aa2a2a; }
+    #log { background: #0a0a0a; border: 1px solid #333; padding: 12px;
+           height: 320px; overflow-y: auto; white-space: pre-wrap; font-size: 12px;
+           border-radius: 4px; margin-top: 8px; }
+    .log-ok    { color: #66ff66; }
+    .log-warn  { color: #ffaa00; }
+    .log-err   { color: #ff4444; }
+    .log-info  { color: #aaddff; }
+    progress { width: 100%; height: 20px; margin: 8px 0; }
+    label { display: block; margin-top: 8px; font-size: 13px; color: #aaa; }
+    .field-row { display: flex; gap: 8px; align-items: center; }
+    .field-row input { flex: 1; }
+    #mac-display { font-weight: bold; color: #ffa500; }
+    .redacted { color: #888; font-style: italic; }
+  </style>
+</head>
+<body>
+<h1>RAK3112 WebSerial Flash Spike — Phase 7 / 02-01</h1>
+
+<div class="warn">
+  <b>SPIKE / VALIDATION ONLY</b> — Throwaway prototype for de-risk testing.
+  Production flasher: plan 02-08. Confirm board MAC before proceeding.
+  <br>Expected board: <b>3c:dc:75:6f:85:dc</b> (project board, pins exposed)
+  or <b>3c:dc:75:6f:89:24</b> (test board).
+</div>
+
+<div class="section">
+  <h2>Firmware Service Config</h2>
+  <label>Firmware Service Base URL</label>
+  <input id="fw-service-url" type="text" value="http://localhost:3006" placeholder="http://10.10.8.171:30060">
+  <label>API Bearer Token</label>
+  <input id="api-token" type="password" placeholder="firmware service API token">
+  <label>Firmware Tag (auto-filled from /provisioning-protocol if left blank)</label>
+  <input id="fw-tag" type="text" value="phase-7-provisioning-green" placeholder="phase-7-provisioning-green">
+  <button onclick="fetchProtocol()">Fetch Protocol</button>
+  <div id="protocol-display" style="margin-top:8px;color:#aaa;font-size:12px;"></div>
+</div>
+
+<div class="section">
+  <h2>Phase 1: Connect + Read MAC + Flash</h2>
+  <p style="font-size:13px;color:#aaa;">
+    Connects to ROM bootloader via esptool-js, reads chip EUI-48 MAC,
+    fetches binary from firmware service, flashes at 0x10000 with
+    <b>eraseAll:false</b> (T-02-01: never erase), then hard_reset.
+  </p>
+  <button id="btn-connect" onclick="runPhase1()">Connect &amp; Flash</button>
+  <div id="mac-confirm" style="display:none;margin-top:10px;">
+    <div class="warn">
+      Chip MAC read: <span id="mac-display">—</span><br>
+      <b>Confirm this is the intended board before flashing.</b><br>
+      <small>Expected: 3c:dc:75:6f:85:dc or 3c:dc:75:6f:89:24</small>
+    </div>
+    <button onclick="confirmAndFlash()">Confirm MAC &amp; Flash</button>
+    <button class="danger" onclick="abortFlash()">Abort</button>
+  </div>
+  <label>Flash progress</label>
+  <progress id="flash-progress" value="0" max="100"></progress>
+</div>
+
+<div class="section">
+  <h2>Phase 2: NVS Provisioning Console</h2>
+  <p style="font-size:13px;color:#aaa;">
+    Re-opens port at 115200, waits for "esp&gt; " prompt, sends prov commands,
+    reboots, reads boot log for [creds:NVS]/PSRAM/modbus markers.
+  </p>
+  <div class="danger" style="font-size:12px;">
+    A2 UNRESOLVED [needs hardware]: exact MAC read API in esptool-js 0.6.0<br>
+    A3 UNRESOLVED [needs hardware]: line terminator \\r\\n vs \\n<br>
+    A4 UNRESOLVED [needs hardware]: reboot command vs RTS pulse<br>
+    A5 UNRESOLVED [needs hardware]: port re-enumeration on macOS/Chrome
+  </div>
+  <label>Modbus baud</label>
+  <input id="mb-baud" type="text" value="9600">
+  <label>Modbus parity (N/E/O)</label>
+  <input id="mb-parity" type="text" value="N">
+  <label>Modbus stop bits</label>
+  <input id="mb-stop" type="text" value="1">
+  <label>Modbus slave ID</label>
+  <input id="mb-slave" type="text" value="1">
+  <label>DevEUI (16 hex chars — auto-computed from MAC when Phase 1 completes)</label>
+  <input id="dev-eui" type="text" placeholder="3CDC75FFFE6F85DC">
+  <label>AppKey (32 hex chars — <span class="redacted">never logged to console [T-02-02]</span>)</label>
+  <input id="app-key" type="password" placeholder="32 hex chars">
+  <button id="btn-nvs" onclick="runPhase2()" disabled>Run NVS Console</button>
+  <label>Boot log markers expected: [creds:NVS] PSRAM modbus</label>
+  <div id="boot-verify-result" style="margin-top:8px;font-weight:bold;"></div>
+</div>
+
+<div class="section">
+  <h2>Log</h2>
+  <button onclick="clearLog()">Clear</button>
+  <div id="log"></div>
+</div>
+
+<script type="module" src="spike.mjs"></script>
+</body>
+</html>

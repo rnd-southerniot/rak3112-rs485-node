@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     MINIO_ACCESS_KEY: str
     MINIO_SECRET_KEY: str
     MINIO_BUCKET: str = "firmware-artifacts"
-    FIRMWARE_TAG: str = "phase-6-modbus-green"
+    FIRMWARE_TAG: str = "phase-7-provisioning-green"
     # Absolute path to the firmware binary baked into the Docker image at build time.
     # The Docker build runs `idf.py build` and copies the resulting .bin here.
     FIRMWARE_PATH: str = "/app/firmware/rak3112_rs485_node.bin"

@@ -148,40 +148,28 @@ def main():
     assert st < 400, f"  checklist FAILED: {st} {r.get('_error', r)}"
     print("[6] pre-installation checklist complete")
 
-    # 7. READY_FOR_INSTALLATION -> triggers async ChirpStack registration.
+    # 7. READY_FOR_INSTALLATION.
     # NOTE: this transition takes an EMPTY body — the status DTO whitelist rejects
     # latitude/longitude (and any extra field) with a 400 ValidationError.
+    # D-11 (Phase 2 design): ChirpStack registration NO LONGER fires here.
+    # It moves to the factory QR scan (POST /provisioning/scan), which is triggered
+    # on-site when the engineer scans the device QR. This script covers the CRM
+    # workflow-walk leg only (Plane-B: NVS credential injection via prov-* console
+    # is handled separately by the WebSerial flasher). The Plane-A ChirpStack
+    # auto-register call that was previously at this step is REMOVED per D-11.
     advance("READY_FOR_INSTALLATION", {})
-    print("[7] READY_FOR_INSTALLATION (ChirpStack registration triggered, async)")
-
-    # 8. poll task for provisioning status, then verify in ChirpStack
-    status = None
-    for _ in range(12):
-        time.sleep(2)
-        _, t = api("GET", f"/workflow/tasks/{task_id}", token)
-        dps = t.get("deviceProvisionings", [])
-        dp = next((d for d in dps if d.get("devEui", "").lower() == deveui), dps[0] if dps else {})
-        status = dp.get("lorawanProvisioningStatus")
-        err = dp.get("lorawanProvisioningError")
-        if status in ("COMPLETED", "FAILED"):
-            print(f"[8] CRM lorawanProvisioningStatus={status}" + (f" error={err}" if err else ""))
-            break
-        print(f"    ...provisioning status={status}")
-
-    st, cs = api("GET", f"/chirpstack/device/{deveui}", token)
-    found = cs.get("found")
-    print(f"[9] ChirpStack device {deveui}: found={found}")
-    if found:
-        d = cs.get("device", {})
-        print(f"    name={d.get('name')} appId={d.get('applicationId')} profile={d.get('deviceProfileId')}")
+    print("[7] READY_FOR_INSTALLATION (task ready for on-site installation)")
+    print("    NOTE: ChirpStack registration deferred to factory QR scan (D-11).")
+    print("          Use the WebSerial flasher to write NVS creds, then scan the")
+    print("          printed QR on-site to trigger ChirpStack device registration.")
 
     print("\n=== SUMMARY ===")
     print(f"  product   : {PRODUCT_CODE} ({product_id})")
     print(f"  task      : {task_id}")
     print(f"  device    : {serial}  DevEUI={deveui}")
-    print(f"  CRM status: {status}")
-    print(f"  ChirpStack: {'registered' if found else 'NOT FOUND'}")
-    return 0 if found else 2
+    print(f"  task status: READY_FOR_INSTALLATION")
+    print(f"  ChirpStack : NOT YET registered (pending factory QR scan per D-11)")
+    return 0
 
 
 if __name__ == "__main__":

@@ -74,7 +74,7 @@ WORKDIR /app
 # Firmware artifact — compiled with all-zero placeholder creds (D-07).
 # This is the single generic .bin; per-device identity is NVS data injected at flash
 # time, never baked into the binary (D-05).
-COPY --from=builder /build/firmware/build/rak3112_rs485_node.bin ./firmware.bin
+COPY --from=builder /build/firmware/build/rak3112_rs485_node.bin /app/firmware/rak3112_rs485_node.bin
 
 # flashable-flag manifest — generated at build time from meter.h (D-01).
 # The FastAPI service reads this at startup and computes which profiles are flashable.

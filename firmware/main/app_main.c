@@ -357,10 +357,41 @@ static void persist_unit(uint8_t unit)
     }
 }
 
+#if !CONFIG_APP_FIELD_SIMULATE
 /*
- * Field application: sample the configured device (real Modbus or simulated) then LoRaWAN-uplink a
- * compact ADR-005 payload, every interval. Config from NVS 'prov' (else Kconfig). Assumes lora is
- * already joined.
+ * Commissioning discovery (ADR-006): scan the RS-485 bus for the profile's Modbus slave ID and
+ * BLOCK until a sensor answers — the node does NOT join or uplink until then (factory has creds but
+ * no sensor; the ID isn't known until the sensor is wired). Probes the persisted/configured unit
+ * first (fast on later boots), else a full scan. The watchdog is intentionally NOT armed here —
+ * this idles. Returns the discovered unit.
+ */
+static uint8_t discover_sensor_unit(const device_profile_t *prof, uint8_t known_unit)
+{
+    for (uint32_t attempt = 0;; ++attempt) {
+        int found = meter_scan_for_unit(UART_NUM_1, prof, known_unit, known_unit, 300);
+        if (found < 0) {
+            found =
+                meter_scan_for_unit(UART_NUM_1, prof, 1, (uint8_t)CONFIG_APP_FIELD_SCAN_ID_HI, 300);
+        }
+        if (found > 0) {
+            return (uint8_t)found;
+        }
+        if (attempt % 6 == 0) {
+            ESP_LOGW(TAG,
+                     "no sensor on RS-485 (profile dev 0x%02X, 1..%d) — waiting; NOT joining/"
+                     "uplinking until a sensor answers (check wiring/power)",
+                     prof->device_byte, CONFIG_APP_FIELD_SCAN_ID_HI);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10000)); /* idle-scan retry; WDT not armed → no reset */
+    }
+}
+#endif
+
+/*
+ * Field application (workflow order): (1) scan the bus for the sensor's Modbus ID and idle until
+ * found — no join/uplink without a sensor; (2) OTAA join once; (3) read the profile's registers and
+ * uplink each interval; if the sensor goes silent for a few cycles, drop back to (1) and re-scan
+ * (session preserved, no re-join). SIMULATE builds skip discovery and join immediately.
  */
 static void run_field_app(void)
 {
@@ -369,9 +400,6 @@ static void run_field_app(void)
     const TickType_t period = pdMS_TO_TICKS(1000u * cfg.interval_s);
     const char *dev_name = (cfg.device == FIELD_DEV_RSFSJT) ? "RS-FSJT" : "MFM384";
 
-    /* ADR-006 increment 3: if the CRM has provisioned a device profile into NVS, the generic
-     * profile-driven reader takes over (any device, no firmware rebuild); else the compiled path.
-     */
     bool have_profile = false;
     const device_profile_t *prof = NULL;
 #if !CONFIG_APP_FIELD_SIMULATE
@@ -392,113 +420,126 @@ static void run_field_app(void)
         .rx_buffer_size = 256,
     };
     ESP_ERROR_CHECK(rs485_init(&rcfg));
-    if (have_profile) {
-        /* Auto-discover the slave ID (ADR-006 incr 4): the profile omits it (varies per site). Try
-         * the configured unit first (fast), else scan the bus; persist the discovery for next boot.
-         */
-        int found = meter_scan_for_unit(UART_NUM_1, prof, cfg.unit, cfg.unit, 300);
-        if (found < 0) {
-            ESP_LOGW(TAG, "configured unit %u silent — scanning bus 1..%d for the device...",
-                     (unsigned)cfg.unit, CONFIG_APP_FIELD_SCAN_ID_HI);
-            found =
-                meter_scan_for_unit(UART_NUM_1, prof, 1, (uint8_t)CONFIG_APP_FIELD_SCAN_ID_HI, 300);
-        }
-        if (found > 0) {
-            if ((uint8_t)found != cfg.unit) {
-                persist_unit((uint8_t)found);
-            }
-            cfg.unit = (uint8_t)found;
-        }
-        ESP_LOGI(TAG,
-                 "field app: PROFILE-DRIVEN device_byte=0x%02X, %u measurands, unit %u%s @ %lu %s, "
-                 "%lus interval",
-                 prof->device_byte, prof->n_meas, (unsigned)cfg.unit, found > 0 ? "" : " (none!)",
-                 (unsigned long)cfg.baud, parity_label(cfg.parity), (unsigned long)cfg.interval_s);
-    } else {
-        ESP_LOGI(TAG, "field app: REAL Modbus %s, unit %u @ %lu %s, %lus interval [cfg:%s]",
-                 dev_name, (unsigned)cfg.unit, (unsigned long)cfg.baud, parity_label(cfg.parity),
-                 (unsigned long)cfg.interval_s, cfg.from_nvs ? "NVS" : "build-default");
-    }
 #else
-    ESP_LOGW(TAG,
-             "field app: SIMULATED %s (no Modbus), %lus interval [cfg:%s] — uplinks flagged "
-             "simulated",
-             dev_name, (unsigned long)cfg.interval_s, cfg.from_nvs ? "NVS" : "build-default");
+    ESP_LOGW(TAG, "field app: SIMULATED %s (no Modbus) — join immediately, %lus interval", dev_name,
+             (unsigned long)cfg.interval_s);
 #endif
 
-    field_wdt_arm();
-#if CONFIG_APP_LIGHT_SLEEP
-    ESP_LOGI(TAG, "light-sleep duty-cycle ON — CPU sleeps between samples (session retained)");
-#else
-    ESP_LOGI(TAG, "light-sleep OFF — busy-wait between samples");
-#endif
+    bool joined = false;
 
-    for (uint32_t tick = 0;; ++tick) {
-        esp_task_wdt_reset();
-        uint8_t buf[53]; /* AS923 DR3 cap; profile payloads run up to 47 B (DSE) */
-        size_t len = 0;
-        uint8_t flags = 0;
-
+    for (;;) { /* outer: (re)discover the sensor, then run until it goes silent */
+#if !CONFIG_APP_FIELD_SIMULATE
         if (have_profile) {
-            float values[DP_MAX_MEAS];
-            if (meter_read_profile(UART_NUM_1, cfg.unit, prof, values, DP_MAX_MEAS) != ESP_OK) {
-                flags |= TELEMETRY_FLAG_STALE;
-                ESP_LOGW(TAG, "[%lu] profile read incomplete — uplinking stale-flagged",
-                         (unsigned long)tick);
+            const uint8_t unit = discover_sensor_unit(prof, cfg.unit); /* blocks until a sensor */
+            if (unit != cfg.unit) {
+                persist_unit(unit); /* scan once → save; later boots probe this unit first */
             }
-            len = dp_encode_payload(prof, values, flags, buf, sizeof(buf));
-            ESP_LOGI(TAG, "[%lu] profile dev=0x%02X %u meas, v[0]=%.2f -> %u B",
-                     (unsigned long)tick, prof->device_byte, prof->n_meas,
-                     prof->n_meas ? values[0] : 0.0f, (unsigned)len);
-        } else if (cfg.device == FIELD_DEV_MFM384) {
-            mfm384_sample_t s = {0};
-#if CONFIG_APP_FIELD_SIMULATE
-            meter_sim_mfm384(tick, &s);
-            flags |= TELEMETRY_FLAG_SIMULATED;
-#else
-            if (meter_read_mfm384(UART_NUM_1, cfg.unit, &s) != ESP_OK) {
-                flags |= TELEMETRY_FLAG_STALE;
-                ESP_LOGW(TAG, "[%lu] MFM384 read failed — uplinking stale-flagged",
-                         (unsigned long)tick);
-            }
-#endif
-            len = payload_encode_mfm384(&s, flags, buf, sizeof(buf));
-            ESP_LOGI(TAG, "[%lu] MFM384 V=%.1f/%.1f/%.1f kW=%.2f kWh=%.2f f=%.2f pf=%.3f -> %u B",
-                     (unsigned long)tick, s.v1n, s.v2n, s.v3n, s.total_kw, s.total_kwh, s.freq,
-                     s.avg_pf, (unsigned)len);
+            cfg.unit = unit;
+            ESP_LOGI(TAG, "sensor found: profile dev=0x%02X unit %u @ %lu %s — joining now",
+                     prof->device_byte, (unsigned)cfg.unit, (unsigned long)cfg.baud,
+                     parity_label(cfg.parity));
         } else {
-            rsfsjt_sample_t s = {0};
-#if CONFIG_APP_FIELD_SIMULATE
-            meter_sim_rsfsjt(tick, &s);
-            flags |= TELEMETRY_FLAG_SIMULATED;
-#else
-            if (meter_read_rsfsjt(UART_NUM_1, cfg.unit, &s) != ESP_OK) {
-                flags |= TELEMETRY_FLAG_STALE;
-                ESP_LOGW(TAG, "[%lu] RS-FSJT read failed — uplinking stale-flagged",
-                         (unsigned long)tick);
-            }
+            ESP_LOGI(TAG, "field app: REAL Modbus %s (compiled), unit %u @ %lu %s", dev_name,
+                     (unsigned)cfg.unit, (unsigned long)cfg.baud, parity_label(cfg.parity));
+        }
 #endif
-            len = payload_encode_rsfsjt(&s, flags, buf, sizeof(buf));
-            ESP_LOGI(TAG, "[%lu] RS-FSJT wind=%.2f m/s -> %u B", (unsigned long)tick, s.wind_mps,
-                     (unsigned)len);
+
+        /* (2) OTAA join — only AFTER a sensor is found, and only once (session persists on
+         * re-scan). */
+        if (!joined) {
+            ESP_ERROR_CHECK(lora_init());
+            for (int a = 1; a <= 5 && !joined; ++a) {
+                ESP_LOGI(TAG, "join attempt %d/5", a);
+                if (lora_join() == ESP_OK) {
+                    joined = true;
+                } else {
+                    vTaskDelay(pdMS_TO_TICKS(10000));
+                }
+            }
+            if (!joined) {
+                ESP_LOGE(TAG, "OTAA join failed after retries — halting (antenna/TCXO/keys)");
+                for (;;) {
+                    vTaskDelay(pdMS_TO_TICKS(10000));
+                }
+            }
         }
 
-        if (len > 0) {
-            lora_send(buf, len);
-        }
+        field_wdt_arm(); /* armed only for the steady-state read loop (not discovery/join) */
+        int silent = 0;
+
+        for (uint32_t tick = 0;; ++tick) { /* (3) read + uplink */
+            esp_task_wdt_reset();
+            uint8_t buf[53]; /* AS923 DR3 cap; profile payloads run up to 47 B (DSE) */
+            size_t len = 0;
+            uint8_t flags = 0;
+            bool go_rediscover = false;
+
+            if (have_profile) {
+                float values[DP_MAX_MEAS];
+                if (meter_read_profile(UART_NUM_1, cfg.unit, prof, values, DP_MAX_MEAS) != ESP_OK) {
+                    flags |= TELEMETRY_FLAG_STALE;
+                    if (++silent >= 3) { /* sensor went silent → drop back to discovery */
+                        ESP_LOGW(TAG, "sensor unit %u silent %d cycles — re-scanning the bus",
+                                 (unsigned)cfg.unit, silent);
+                        go_rediscover = true;
+                    }
+                } else {
+                    silent = 0;
+                }
+                len = dp_encode_payload(prof, values, flags, buf, sizeof(buf));
+                ESP_LOGI(TAG, "[%lu] profile dev=0x%02X %u meas, v[0]=%.2f -> %u B",
+                         (unsigned long)tick, prof->device_byte, prof->n_meas,
+                         prof->n_meas ? values[0] : 0.0f, (unsigned)len);
+            } else if (cfg.device == FIELD_DEV_MFM384) {
+                mfm384_sample_t s = {0};
+#if CONFIG_APP_FIELD_SIMULATE
+                meter_sim_mfm384(tick, &s);
+                flags |= TELEMETRY_FLAG_SIMULATED;
+#else
+                if (meter_read_mfm384(UART_NUM_1, cfg.unit, &s) != ESP_OK) {
+                    flags |= TELEMETRY_FLAG_STALE;
+                }
+#endif
+                len = payload_encode_mfm384(&s, flags, buf, sizeof(buf));
+                ESP_LOGI(TAG,
+                         "[%lu] MFM384 V=%.1f/%.1f/%.1f kW=%.2f kWh=%.2f f=%.2f pf=%.3f -> %u B",
+                         (unsigned long)tick, s.v1n, s.v2n, s.v3n, s.total_kw, s.total_kwh, s.freq,
+                         s.avg_pf, (unsigned)len);
+            } else {
+                rsfsjt_sample_t s = {0};
+#if CONFIG_APP_FIELD_SIMULATE
+                meter_sim_rsfsjt(tick, &s);
+                flags |= TELEMETRY_FLAG_SIMULATED;
+#else
+                if (meter_read_rsfsjt(UART_NUM_1, cfg.unit, &s) != ESP_OK) {
+                    flags |= TELEMETRY_FLAG_STALE;
+                }
+#endif
+                len = payload_encode_rsfsjt(&s, flags, buf, sizeof(buf));
+                ESP_LOGI(TAG, "[%lu] RS-FSJT wind=%.2f m/s -> %u B", (unsigned long)tick,
+                         s.wind_mps, (unsigned)len);
+            }
+
+            if (len > 0 && !go_rediscover) {
+                lora_send(buf, len);
+            }
 
 #if CONFIG_APP_DEBUG_WDT_STARVE
-        if (tick + 1 >= (uint32_t)CONFIG_APP_DEBUG_WDT_STARVE_AFTER) {
-            ESP_LOGE(TAG,
-                     "DEBUG: starving the task watchdog after %lu cycle(s) — expect a TWDT reset "
-                     "in ~%ds (7a gate)",
-                     (unsigned long)(tick + 1), CONFIG_APP_TASK_WDT_TIMEOUT_S);
-            for (;;) {
-                vTaskDelay(pdMS_TO_TICKS(1000)); /* deliberately NOT feeding the watchdog */
+            if (tick + 1 >= (uint32_t)CONFIG_APP_DEBUG_WDT_STARVE_AFTER) {
+                ESP_LOGE(TAG, "DEBUG: starving the task watchdog after %lu cycle(s) (7a gate)",
+                         (unsigned long)(tick + 1));
+                for (;;) {
+                    vTaskDelay(pdMS_TO_TICKS(1000)); /* deliberately NOT feeding the watchdog */
+                }
             }
-        }
 #endif
-        wdt_fed_delay(period);
+            if (go_rediscover) {
+                break;
+            }
+            wdt_fed_delay(period);
+        }
+
+        esp_task_wdt_delete(NULL); /* leaving the read loop to re-discover — stop watching */
     }
 }
 
@@ -562,6 +603,10 @@ void app_main(void)
     ota_log_boot();
     ota_mark_valid(); /* booted into app code → healthy; cancel any pending rollback */
 
+    /* The board's LoRaWAN identity = ESP32-S3 MAC-derived DevEUI (the SX1262 has none). Logged
+     * early + unconditionally so the CRM factory step can read it back BEFORE any sensor/join. */
+    ESP_LOGW(TAG, "DevEUI (from MAC): %016llx", (unsigned long long)lora_deveui_mac());
+
 #if CONFIG_APP_LED_HEARTBEAT
     run_led_heartbeat(); /* bench: breathe the WS2812 forever; does not return */
 #endif
@@ -589,23 +634,7 @@ void app_main(void)
         }
     }
 
-    ESP_ERROR_CHECK(lora_init());
-
-    /* OTAA join with a few retries (do NOT abort/bootloop on RF failure during bring-up). */
-    int joined = 0;
-    for (int attempt = 1; attempt <= 5 && !joined; ++attempt) {
-        ESP_LOGI(TAG, "join attempt %d/5", attempt);
-        if (lora_join() == ESP_OK) {
-            joined = 1;
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(10000));
-        }
-    }
-    if (!joined) {
-        ESP_LOGE(TAG, "OTAA join failed after retries — halting (check antenna/TCXO/keys)");
-        for (;;)
-            vTaskDelay(pdMS_TO_TICKS(10000));
-    }
-
-    run_field_app(); /* sample -> encode -> uplink loop; does not return */
+    /* Workflow order: run_field_app scans for the sensor FIRST, joins only once a sensor is found,
+     * then reads + uplinks (re-scanning if the sensor goes silent). Does not return. */
+    run_field_app();
 }

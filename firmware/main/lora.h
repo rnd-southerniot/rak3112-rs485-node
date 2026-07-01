@@ -20,6 +20,13 @@ extern "C" {
  */
 bool lora_is_provisioned(void);
 
+/* DevEUI derived from the ESP32-S3 factory MAC (EUI-64 with FF:FE), the board's stable identity —
+ * the SX1262 has none. The CRM reads this at the factory step to register the device + mint the
+ * AppKey. lora_deveui_mac() is always the MAC-derived value; lora_deveui() is the effective one the
+ * node joins with (NVS-provisioned DevEUI wins, else MAC-derived). */
+uint64_t lora_deveui_mac(void);
+uint64_t lora_deveui(void);
+
 /* radio.begin (TCXO 1.8V, DIO2 RF switch, AS923 dwell). */
 esp_err_t lora_init(void);
 /* OTAA join (beginOTAA + activateOTAA). Blocks. */

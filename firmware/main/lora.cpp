@@ -15,6 +15,7 @@
     "lora_credentials.h not found — using PLACEHOLDER OTAA creds (build-check only; copy lora_credentials.h.example to lora_credentials.h and fill real keys to join)")
 #include "lora_credentials.h.example"
 #endif
+#include "esp_mac.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -49,6 +50,32 @@ static void load_prov_creds(void)
         }
         nvs_close(h);
     }
+}
+
+/*
+ * DevEUI derived from the ESP32-S3 factory MAC (EUI-48 -> EUI-64 with FF:FE inserted). The SX1262
+ * radio has no DevEUI, so this is the board's stable identity: MAC 3c:dc:75:6f:85:dc yields
+ * 3cdc75fffe6f85dc. Used as the DevEUI default (NVS-provisioned creds still take priority); the CRM
+ * reads it back at the factory step to register the device + mint the AppKey.
+ */
+static uint64_t deveui_from_mac(void)
+{
+    uint8_t mac[6] = {0};
+    esp_efuse_mac_get_default(mac);
+    return ((uint64_t)mac[0] << 56) | ((uint64_t)mac[1] << 48) | ((uint64_t)mac[2] << 40) |
+           ((uint64_t)0xFFu << 32) | ((uint64_t)0xFEu << 24) | ((uint64_t)mac[3] << 16) |
+           ((uint64_t)mac[4] << 8) | (uint64_t)mac[5];
+}
+
+extern "C" uint64_t lora_deveui_mac(void)
+{
+    return deveui_from_mac();
+}
+
+extern "C" uint64_t lora_deveui(void)
+{
+    load_prov_creds();
+    return s_nvs_creds ? s_deveui : deveui_from_mac();
 }
 
 extern "C" bool lora_is_provisioned(void)
@@ -124,11 +151,13 @@ extern "C" esp_err_t lora_init(void)
 extern "C" esp_err_t lora_join(void)
 {
     load_prov_creds();
-    const uint64_t deveui = s_nvs_creds ? s_deveui : (uint64_t)LORA_DEVEUI;
+    /* DevEUI default is MAC-derived (the SX1262 has no DevEUI); NVS-provisioned creds still win. */
+    const uint64_t deveui = s_nvs_creds ? s_deveui : deveui_from_mac();
     const uint64_t joineui = s_nvs_creds ? s_joineui : (uint64_t)LORA_JOINEUI;
     uint8_t *appkey = s_nvs_creds ? s_appkey : (uint8_t *)LORA_APPKEY;
-    ESP_LOGI(TAG, "OTAA: DevEUI=%016llx JoinEUI=%016llx [creds:%s]", (unsigned long long)deveui,
-             (unsigned long long)joineui, s_nvs_creds ? "NVS" : "compiled");
+    ESP_LOGI(TAG, "OTAA: DevEUI=%016llx JoinEUI=%016llx [creds:%s, DevEUI:%s]",
+             (unsigned long long)deveui, (unsigned long long)joineui,
+             s_nvs_creds ? "NVS" : "compiled", s_nvs_creds ? "NVS" : "MAC");
     int16_t st = s_node.beginOTAA(joineui, deveui, appkey, appkey);
     if (st != RADIOLIB_ERR_NONE) {
         ESP_LOGE(TAG, "beginOTAA failed (%d)", st);

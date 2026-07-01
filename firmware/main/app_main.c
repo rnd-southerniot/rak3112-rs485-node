@@ -448,18 +448,26 @@ static void run_field_app(void)
          * re-scan). */
         if (!joined) {
             ESP_ERROR_CHECK(lora_init());
-            for (int a = 1; a <= 5 && !joined; ++a) {
-                ESP_LOGI(TAG, "join attempt %d/5", a);
+            /* §5 (CRM_PROVISIONING_WORKFLOW): retry OTAA join INDEFINITELY with backoff.
+             * A board can power on before the field QR-scan registers it in ChirpStack, so
+             * early joins are rejected; keep trying so the very next attempt AFTER
+             * registration succeeds with no reboot. Backoff 10 -> 30 -> 60 s capped
+             * (AS923 fair-use). WDT is not armed until after join (contract #7), and
+             * vTaskDelay yields to idle, so the long waits are reset-safe. */
+            uint32_t backoff_s = 10;
+            for (uint32_t a = 1; !joined; ++a) {
+                ESP_LOGI(TAG, "join attempt %lu", (unsigned long)a);
                 if (lora_join() == ESP_OK) {
                     joined = true;
-                } else {
-                    vTaskDelay(pdMS_TO_TICKS(10000));
+                    break;
                 }
-            }
-            if (!joined) {
-                ESP_LOGE(TAG, "OTAA join failed after retries — halting (antenna/TCXO/keys)");
-                for (;;) {
-                    vTaskDelay(pdMS_TO_TICKS(10000));
+                ESP_LOGW(TAG,
+                         "join failed — retrying in %lu s "
+                         "(awaiting ChirpStack registration? check antenna/TCXO/keys)",
+                         (unsigned long)backoff_s);
+                vTaskDelay(pdMS_TO_TICKS(backoff_s * 1000));
+                if (backoff_s < 60) {
+                    backoff_s = (backoff_s < 30) ? 30 : 60;
                 }
             }
         }

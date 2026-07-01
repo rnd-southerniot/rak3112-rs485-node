@@ -605,11 +605,27 @@ kubectl rollout status deployment/firmware-service -n firmware
 
 ---
 
-## Phase 7 spike findings — PENDING HARDWARE ROUND-TRIP
+## Phase 7 spike findings — HARDWARE VALIDATED (CLI, 2026-07-01)
 
-The following assumptions require a real RAK3112 connected to Chrome on macOS.
-**Record the resolved values here once hardware testing is complete.**
-02-08 (WebSerial flasher) reads these values from this section.
+Validated on the project RAK3112 (MAC `3c:dc:75:6f:85:dc`, Guardrail §3 #1 board-confirm:
+ESP32-S3 QFN56 rev v0.2, 8 MB PSRAM) via **esptool + pyserial CLI** — not the Chrome
+esptool-js spike. Flash: `esptool write_flash 0x10000 rak3112_rs485_node.bin` (app-only,
+**NO erase** — NVS preserved, `eraseAll:false` honored); hash verified.
+
+**Hardware results:**
+- prov console live — `help` lists `help` + `prov` (modbus|creds|show).
+- `prov creds 3CDC75FFFE6F85DC 0000000000000000 <appKey>` → `OK ... appKey=<redacted 32 hex>`.
+- `prov show` → devEui set, `appKey: <redacted>` (never echoed — T-02-02 holds on-device).
+- Reboot boot log: **`[creds:NVS] DevEUI=3cdc75fffe6f85dc JoinEUI=0000…`**, `PSRAM 8192K`,
+  `[modbus] compiled defaults`, `prov console ready` → lora.cpp NVS-first boot PROVEN.
+- OTAA join with NVS creds → `join failed (-1116)` — expected on bench (test appKey not
+  registered in ChirpStack, no gateway).
+- **NOTE:** built binary `git describe` = `phase-6-modbus-green-16-g226d50` (build predated the
+  phase-7 tag) — functionally phase-7 (prov console present). Gate A firmware-service rebuild
+  MUST build FROM the `phase-7-provisioning-green` tag so version + served artifact match.
+
+02-08 (WebSerial flasher) reads these values. Browser-specific items (A2 esptool-js API,
+A5 Chrome SerialPort survival) still need in-Chrome confirmation.
 
 ### A1 — Flash offset: RESOLVED
 
@@ -620,7 +636,9 @@ The following assumptions require a real RAK3112 connected to Chrome on macOS.
 | **Type** | App-only binary (no merged bootloader) |
 | **Implication** | `FlashOptions.fileArray[0].address = 0x10000` |
 
-### A2 — MAC read call in esptool-js 0.6.0: UNRESOLVED [needs hardware]
+### A2 — MAC read call in esptool-js 0.6.0: PARTIAL (chip MAC readable via CLI; esptool-js API pending 02-08)
+CLI `esptool read-mac` returns `3c:dc:75:6f:85:dc` (EUI-48, colon-hex). Capability proven; the exact
+esptool-js browser call (`chip.readMac` vs `readMac`) still needs in-Chrome confirmation in 02-08.
 
 | | |
 |---|---|
@@ -630,7 +648,8 @@ The following assumptions require a real RAK3112 connected to Chrome on macOS.
 | **Probe** | `spike.mjs` tries both calls, logs `[A2-PROBE]` output — record which succeeded |
 | **Record here** | MAC read call: `_____________` Return type: `_____________` Format: `_____________` |
 
-### A3 — Line terminator for prov commands: UNRESOLVED [needs hardware]
+### A3 — Line terminator for prov commands: RESOLVED = `\r\n`
+Commands accepted with `\r\n` over USB-Serial-JTAG; `prov show`/`prov creds` echoed + acted.
 
 | | |
 |---|---|
@@ -639,7 +658,10 @@ The following assumptions require a real RAK3112 connected to Chrome on macOS.
 | **Proposed** | `\r\n` (standard VT100 terminal; spike uses `\r\n` first — `[A3-PROBE]`) |
 | **Record here** | Working terminator: `_____________` (if commands ignored, change to `\n`) |
 
-### A4 — Reboot command vs RTS pulse: UNRESOLVED [needs hardware]
+### A4 — Reboot command vs RTS pulse: RESOLVED = NO console reboot cmd → reset line / physical
+CORRECTION to the proposed answer: `restart` is NOT registered (`help` shows only `help` + `prov`);
+`restart` → "Unrecognized command". The flasher MUST reboot via `port.setSignals()` (DTR/RTS → EN
+pulse, as esptool does) or physical RST. There is no `esp_restart` console command either.
 
 | | |
 |---|---|
@@ -648,7 +670,11 @@ The following assumptions require a real RAK3112 connected to Chrome on macOS.
 | **Proposed** | `restart` built-in command (ESP-IDF console registers it by default); spike tries `restart` then `esp_restart` |
 | **Record here** | Working reboot mechanism: `_____________` |
 
-### A5 — Port re-enumeration on macOS/Chrome after hard_reset: UNRESOLVED [needs hardware]
+### A5 — Port re-enumeration after reset: CONFIRMED (USB-JTAG re-enumerates; Chrome SerialPort survival pending 02-08)
+On reset the USB-Serial-JTAG device drops + re-adds — an already-open handle goes deaf (a monitor
+had to reopen the port to catch the boot log; port timestamp changed). So after reboot the flasher
+MUST reacquire the port. Whether Chrome's `SerialPort` object survives (`port.open()`) or needs
+`navigator.serial.getPorts()` re-select is the remaining browser-specific detail for 02-08.
 
 | | |
 |---|---|
@@ -659,14 +685,14 @@ The following assumptions require a real RAK3112 connected to Chrome on macOS.
 
 ### Spike validation checklist (complete on hardware)
 
-- [ ] Board MAC matches expected (`3c:dc:75:6f:85:dc` or `3c:dc:75:6f:89:24`) — T-02-04
-- [ ] Flash at 0x10000 completes, `eraseAll:false` confirmed — T-02-01
-- [ ] Device boots after flash (not bricked, no erase_flash issued)
-- [ ] `prov modbus` accepted; `prov creds` accepted (appKey not echoed) — T-02-02
-- [ ] `prov show` prints devEui + `<redacted>` for appKey
-- [ ] Boot log after reboot contains `[creds:NVS]` + `PSRAM` + `modbus`
-- [ ] A2, A3, A4, A5 values recorded above
-- [ ] No secrets appeared in browser console, DOM, or DevTools network tab
+- [x] Board MAC matches expected (`3c:dc:75:6f:85:dc`) — T-02-04
+- [x] Flash at 0x10000 completes, `eraseAll:false` confirmed — T-02-01 (esptool write_flash, no erase)
+- [x] Device boots after flash (not bricked, no erase_flash issued)
+- [x] `prov creds` accepted (appKey not echoed) — T-02-02  · [ ] `prov modbus` NOT exercised (creds path only)
+- [x] `prov show` prints devEui + `<redacted>` for appKey
+- [x] Boot log after reboot contains `[creds:NVS]` + `PSRAM` + `modbus`
+- [x] A2, A3, A4, A5 values recorded above (A2/A5 browser-API detail deferred to 02-08)
+- [x] No secrets leaked in serial output (appKey redacted in `prov creds` OK + `prov show`) — browser DevTools check is 02-08
 
 ---
 

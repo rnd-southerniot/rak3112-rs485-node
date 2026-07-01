@@ -1,7 +1,8 @@
 # CRM provisioning workflow — factory → field (authoritative)
 
 > **Audience:** the `crm.siot.solutions` developer + the Claude agent that drives build/flash/provision.
-> **Status:** rev1 · 2026-07-01 · aligned to the current firmware (`main`).
+> **Status:** rev2 · 2026-07-01 · QRSEC-01 correction: the QR encodes the opaque `deviceSerial`
+> ONLY — never the DevEUI, AppKey, or JoinEUI; aligned to the current firmware (`main`).
 > **Supersedes** the sequence in [`CRM_FIRMWARE_AGENT_GUIDE.md`](CRM_FIRMWARE_AGENT_GUIDE.md) (that
 > doc's agent prompt/safety-gate mechanics still apply; this doc is the source of truth for the
 > **order of operations** and the firmware contract points).
@@ -15,10 +16,11 @@
 The CRM **builds** a firmware image with the ordered sensor's **device profile compiled in** and
 **flashes** it. The board reports a **DevEUI derived from its ESP32-S3 MAC**; the CRM **mints the
 AppKey**, writes **DevEUI + AppKey to the board's NVS** (over the WebSerial `prov` console), and
-prints a **QR code** with the credentials. The board, having **no sensor yet**, sits idle — it does
+prints a **QR code encoding only the opaque `deviceSerial`** — the DevEUI, AppKey, and JoinEUI are
+**never** in the QR. The board, having **no sensor yet**, sits idle — it does
 **not** join. In the field, the sensor is wired and the **QR is scanned**, which triggers the CRM to
-**register the device in ChirpStack**. The board then **scans the RS-485 bus for the Modbus ID,
-joins OTAA, and uplinks** the register payload.
+**look up the stored credentials by serial and register the device in ChirpStack**. The board then
+**scans the RS-485 bus for the Modbus ID, joins OTAA, and uplinks** the register payload.
 
 Two independent facts must both be true before a join is accepted: **(B)** creds are in the board's
 NVS (factory), and **(A)** the device is registered in ChirpStack (field QR scan).
@@ -40,7 +42,7 @@ sequenceDiagram
     Agent-->>CRM: DevEUI
     CRM->>CRM: mint AppKey
     CRM->>Board: prov creds <devEui> <joinEui> <appKey>  (WebSerial, NVS)
-    CRM->>CRM: generate QR (DevEUI/AppKey/JoinEUI/serial)
+    CRM->>CRM: generate QR (opaque deviceSerial only)
     Note over Board: no sensor → idle-scan, NO join
     Note over Board,CS: B — FIELD (sensor wired)
     Board->>Board: scan RS-485 → find Modbus ID
@@ -62,7 +64,9 @@ sequenceDiagram
    chip — it originates in the CRM.)*
 5. **Write creds → NVS.** The CRM writes `prov creds <devEui> <joinEui> <appKey>` over the WebSerial
    `prov` console (Plane B). JoinEUI is `0000000000000000` for ChirpStack.
-6. **Generate QR** containing the credentials + serial/profile (QR mechanics are handled CRM-side).
+6. **Generate QR.** The CRM generates a QR code encoding **only the opaque `deviceSerial`**
+   (`DEV-<12hex>`) — the DevEUI, AppKey, and JoinEUI are **never** in the QR. At the field scan, the
+   backend resolves the stored credentials from the serial (QRSEC-01).
 7. **Idle.** With no sensor, the board scans the bus, finds nothing, and **idles — it does NOT join
    or uplink.** This is the correct factory end state.
 
@@ -100,8 +104,10 @@ These are guaranteed by the current firmware (`main`) — the CRM/agent depends 
   from the ESP32-S3, **not** the SX1262 (the radio has no DevEUI). The CRM reads it back (contract 1);
   it does **not** assign the DevEUI.
 - **AppKey** = a random 128-bit key **the CRM mints**. It **cannot be extracted** from any chip. The
-  CRM writes it to NVS (Plane B) and puts it in the QR. **It is a secret** (global §4 / guardrail
-  §3 #4): never log it in plaintext; the QR carrying it is sensitive and must be handled securely.
+  CRM writes it to NVS (Plane B) **only** — it is **never** put in the QR. The QR encodes only the
+  opaque `deviceSerial`; the backend resolves the AppKey (and DevEUI) from the serial at scan time
+  (QRSEC-01). **It is a secret** (global §4 / guardrail §3 #4): never log it in plaintext, and never
+  transmit it outside the trusted CRM backend / flasher session.
 
 ---
 

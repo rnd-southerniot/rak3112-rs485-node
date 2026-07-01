@@ -19,8 +19,8 @@ spec:
         - name: firmware-service
           # Image tag = the pinned firmware git tag (D-06: build-once per tag).
           # [ASSUMED] Docker Hub repo confirmed in Plan 07 user_setup.
-          image: fahim0173/rak3112-firmware-service:phase-6-modbus-green
-          # phase-6-modbus-green is a mutable firmware-identity tag (rebuilt in place),
+          image: fahim0173/rak3112-firmware-service:phase-7-provisioning-green
+          # phase-7-provisioning-green is a mutable firmware-identity tag (rebuilt in place),
           # so Always — otherwise nodes serve a stale cached image on rollout.
           imagePullPolicy: Always
           ports:

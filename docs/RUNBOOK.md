@@ -627,6 +627,31 @@ esptool-js spike. Flash: `esptool write_flash 0x10000 rak3112_rs485_node.bin` (a
 02-08 (WebSerial flasher) reads these values. Browser-specific items (A2 esptool-js API,
 A5 Chrome SerialPort survival) still need in-Chrome confirmation.
 
+### Gate A — firmware-service cluster rebuild: CLOSED (2026-07-01)
+
+Rebuilt the in-cluster firmware-service image FROM the `phase-7-provisioning-green` tag
+(detached checkout `c687aa7`; `firmware/` proven byte-identical to `main` HEAD via
+`git diff --stat tag..HEAD -- firmware/` = empty, so the served `.bin` is the same
+artifact hardware-validated above). Built `linux/amd64` via `docker buildx --push` →
+`fahim0173/rak3112-firmware-service:phase-7-provisioning-green` (index
+`sha256:dafa1eed57a97474d7b92546b730ecad25a35001c0b530335f5711ebe1ab7c6e`, amd64 manifest
+`sha256:c61e119304c561fc78e6ce2b484ddaadf44e5dd8ca3a868f30b756cf4650c1a8`). NOTE: the
+Dockerfile `COPY firmware/ …` brings no `.git`, so the earlier `git describe` concern is
+moot for the artifact — the build-arg `FIRMWARE_TAG` + k8s secret set the reported tag.
+
+Rolled out in ns `firmware` (entry `root@10.10.8.168`; legacy VM 10.10.8.140 untouched):
+patched secret `firmware-service-env` `FIRMWARE_TAG`→phase-7, `kubectl set image`→phase-7,
+`rollout status` clean (maxUnavailable:0). New pod `firmware-service-c58884cd7-xp2rt`.
+
+Verified in-pod (`kubectl exec -i … -- python -`; `API_TOKEN` never left the pod):
+`POST /v1/build`→200 warmed the MinIO cache; `GET /v1/builds/phase-7-provisioning-green`→200
+`status:ready`, served-binary **SHA-256
+`8dcedba85093d37d3be88072d2cb296ce8126dbe71d0cb0cf7fc1ac0c951d47b`**, presigned `binaryUrl`
+via external MinIO NodePort `10.10.8.171:30900` (browser-reachable for the 02-08 flasher).
+Regression: `/v1/sensors` = 4 sensors / 2 flashable (mfm384, rsfsjt), unchanged from phase-6.
+
+02-01 is now fully complete (code + hardware + Gate A). 02-08 can pull the served phase-7 binary.
+
 ### A1 — Flash offset: RESOLVED
 
 | | |

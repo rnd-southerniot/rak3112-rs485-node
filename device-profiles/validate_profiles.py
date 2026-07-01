@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SCHEMA = HERE / "schema.json"
+SCHEMA = HERE / "schema" / "profile.schema.json"
 PROFILES = sorted((HERE / "profiles").glob("*.json"))
 HEADER_LEN = 3
 DR3_MAX = 53

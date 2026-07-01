@@ -1,0 +1,17 @@
+{
+  "_generated_by": "device-profiles/profiles_to_catalog.py \u2014 do not hand-edit",
+  "profileKey": "rsfsjt-n01",
+  "displayName": "Renke RS-FSJT-N01",
+  "manufacturer": "Renke",
+  "model": "RS-FSJT-N01",
+  "deviceByte": 2,
+  "modbus": {
+    "baud": 4800,
+    "parity": "N",
+    "stopBits": 1,
+    "functionCode": 3,
+    "wordOrder": "ABCD"
+  },
+  "payloadBytes": 5,
+  "isActive": true
+}

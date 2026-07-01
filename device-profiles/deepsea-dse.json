@@ -1,16 +1,17 @@
 {
+  "_generated_by": "device-profiles/profiles_to_catalog.py \u2014 do not hand-edit",
   "profileKey": "deepsea-dse",
-  "displayName": "DeepSea DSE Generator Controller",
-  "manufacturer": "DeepSea",
-  "model": "DSE",
+  "displayName": "Deep Sea Electronics DSE73xx/86xx genset controller",
+  "manufacturer": "Deep Sea Electronics",
+  "model": "DSE73xx/86xx genset controller",
   "deviceByte": 4,
   "modbus": {
-    "baud": 9600,
+    "baud": 115200,
     "parity": "N",
-    "stopBits": 1,
+    "stopBits": 2,
     "functionCode": 3,
-    "wordOrder": "AB"
+    "wordOrder": "ABCD"
   },
-  "payloadBytes": 24,
-  "isActive": false
+  "payloadBytes": 47,
+  "isActive": true
 }

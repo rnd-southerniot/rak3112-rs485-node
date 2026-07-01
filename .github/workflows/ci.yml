@@ -55,3 +55,29 @@ jobs:
           cmake -S tests/host -B tests/host/build -G Ninja
           cmake --build tests/host/build
           ctest --test-dir tests/host/build --output-on-failure
+
+  device-profiles:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate profiles + enforce generated-catalog freshness
+        run: |
+          python -m pip install --quiet jsonschema
+          python device-profiles/validate_profiles.py
+          # Fail if the top-level CRM catalog (what the API serves) has drifted from profiles/.
+          python device-profiles/profiles_to_catalog.py --check
+
+  api-tests:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install API + test deps (pinned)
+        run: python -m pip install --quiet -r requirements.txt -r requirements-dev.txt
+      - name: Run CRM firmware-service test suite
+        run: python -m pytest tests/unit tests/integration -q

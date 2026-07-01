@@ -1,0 +1,25 @@
+# deploy/cluster.yaml — deploy-to-cluster descriptor for rak3112-firmware-service.
+#
+# PRIVATE service (D6): no hostname, no NodePort, no public route.
+# Sole consumer: scomm-crm (ns scomm-crm) via ClusterIP in-cluster DNS.
+# In-cluster DNS: firmware-service.firmware.svc.cluster.local:8000
+service: firmware-service
+namespace: firmware
+# private: no hostname field — ClusterIP only, no Cloudflare/NPM/NodePort exposure.
+port: 8000
+health: /healthz
+image:
+  dockerfile: Dockerfile
+  context: .                          # repo root (rak3112-rs485-node/)
+  repo: fahim0173/rak3112-firmware-service
+deps:
+  minio:
+    bucket: firmware-artifacts        # scoped key provisioned at deploy time
+secrets:
+  - API_TOKEN
+  - MINIO_INTERNAL_ENDPOINT
+  - MINIO_EXTERNAL_ENDPOINT
+  - MINIO_ACCESS_KEY
+  - MINIO_SECRET_KEY
+  - MINIO_BUCKET
+  - FIRMWARE_TAG

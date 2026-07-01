@@ -758,6 +758,268 @@ across both.
 
 **New team tooling this session:** `docs/prompts/add-sensor-from-datasheet.md` (generate a sensor's
 read/sim/payload from a datasheet + proven Arduino code — Arduino is ground-truth for wire details).
+## Bench note — sim-mfm384 build/flash/monitor (2026-06-30)
+
+Context: bench validation for SCOMM CRM Phase 2 (02-01 WebSerial/provisioning spike prep). Goal was
+build → flash → monitor of the **`sim-mfm384`** profile on a real RAK3112. **No firmware source change**
+— this exercised the existing `phase-6-modbus-green`-era tree.
+
+**Toolchain note:** ESP-IDF is NOT installed locally on this machine (`~/esp/esp-idf-v5.5.4/` absent,
+`idf.py` not on PATH). Built via the canonical Docker image `espressif/idf:v5.5.4` (per `Dockerfile`),
+flashed/monitored host-side (Docker on macOS cannot pass through USB serial).
+
+- **Board ID (pre-flash, §3 #1):** `esptool chip_id` → ESP32-S3, Embedded PSRAM 8MB, **MAC
+  `3c:dc:75:6f:85:dc`** = the project board (matches §6 Phase 4/5/6 state). Port `/dev/cu.usbmodem1101`.
+  The unrelated ESP32-P4 was not present/never touched.
+- **Build:** `idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.sim-mfm384" build`
+  in the IDF v5.5.4 container — clean. `build/rak3112_rs485_node.bin` 297712 B (app partition 72% free).
+  Placeholder OTAA creds (no `lora_credentials.h` → `__has_include` falls back to the committed
+  `.example`, all-zero). Throwaway bench build — NOT tagged.
+- **Flash:** host `esptool` v5.2.0, `write_flash` 0x0/0x8000/0x10000 — `--after hard_reset`,
+  **no `erase_flash` / `eraseAll:false`** (§3 #1 gate honored). All 3 regions "Hash of data verified".
+- **Boot evidence (115200, USB-Serial-JTAG):** `esp_psram: SPI SRAM memory test OK` + `Adding pool of
+  8192K of PSRAM`; app `rak3112_rs485_node`, ESP-IDF v5.5.4, compile time `Jun 30 2026 11:23:08`;
+  `lora: SX1262 up (AS923, TCXO, DIO2 RF-switch)`; `main_task: Calling app_main()`.
+- **FINDING — sim telemetry is join-gated:** with placeholder all-zero creds the OTAA join fails
+  (`join failed (-1116)`) on all 5 attempts; `app_main` (app_main.c:263-267) then logs
+  `OTAA join failed after retries — halting` and idles forever. `run_field_app()` — the only caller of
+  `meter_sim_mfm384()` (the synthesized 230V/5kW/50Hz/0.95PF dataset) — is reached **only after a
+  successful join** (comment: "Assumes lora is already joined"). So the simulated MFM384 telemetry
+  cannot be observed on a bench without real creds + a gateway in range + ChirpStack registration. The
+  sim-mfm384 leg itself is already proven end-to-end (§6 Phase 6: ChirpStack fCnt 440, `simulated:true`).
+- **Disposition:** build/flash/boot/monitor pipeline **PASS**; live sim-data observation deferred (no
+  creds/gateway on this bench, by operator decision "stop here — pipeline proven"). No `erase_flash`
+  issued; no secrets entered the tree.
+
+## Phase 7 provisioning console (2026-06-30)
+
+**Context:** CRM Phase 2 de-risk spike (02-01). Adds a USB-Serial-JTAG REPL console to the
+firmware so that the WebSerial flasher (plan 02-08) can inject per-device OTAA credentials
+and Modbus config into NVS after flashing the binary.
+
+### What was implemented
+
+- `firmware/main/prov_console.cpp` + `.h`: `esp_console` REPL, prompt `"esp> "`, commands:
+  - `prov modbus <baud> <parity> <stopBits> <slaveId>` → NVS ns:`"modbus"` keys `modbus_baud/parity/stop/slave`
+  - `prov creds <devEui> <joinEui> <appKey>` → NVS ns:`"lorawan"` keys `lorawan_deveui/joineui/appkey`
+  - `prov show` → prints all NVS state; **appKey ALWAYS redacted** (T-02-02)
+- `lora.cpp` patched: `lora_join()` reads `lorawan_deveui/joineui/appkey` from NVS first;
+  falls back to compiled `lora_credentials.h` placeholder. Logs `[creds:NVS]` when from NVS.
+- `app_main.c` patched: reads `modbus_baud/parity/stop/slave` from NVS (`"modbus"` ns) at boot;
+  logs `[modbus]` boot marker; calls `prov_console_init()` after `lora_init()`.
+- Tag: **`phase-7-provisioning-green`** (commit `c687aa7`)
+
+### Build record (2026-06-30)
+
+| Item | Value |
+|---|---|
+| Toolchain | `espressif/idf:v5.5.4` (Docker, no local IDF) |
+| Target | `esp32s3` |
+| Binary | `firmware/build/rak3112_rs485_node.bin` |
+| Binary size | 0x58110 bytes (357 kB; 66% of app partition free) |
+| Build exit | 0 (PASS) |
+| gitleaks | Unavailable in this environment — manual secret scan: CLEAN |
+| Secrets in tree | None — appKey injected at runtime into NVS |
+
+**A1 RESOLVED — flash offset: `0x10000`** (app-only binary; from `firmware/build/flasher_args.json`).
+The firmware service ships `rak3112_rs485_node.bin` which is the app binary only (not a merged
+bootloader+ptable+app). Flash it at offset `0x10000`. Bootloader at `0x0` and partition table
+at `0x8000` remain untouched.
+
+### Boot-verify markers (post-provisioning boot)
+
+The WebSerial flasher reads the boot log for these three strings to confirm successful provisioning:
+
+| Marker | Source | Condition |
+|---|---|---|
+| `[creds:NVS]` | `lora.cpp` | NVS contains valid devEui + joinEui + appKey (16+16+32 hex) |
+| `PSRAM` | ESP-IDF bootloader | Always present on ESP32-S3R8 (`Found 8MB PSRAM device`) |
+| `modbus` | `app_main.c` | Always present (`[modbus] NVS:` or `[modbus] compiled defaults:`) |
+
+### Cluster image rebuild (OPERATOR GATE — deferred)
+
+The firmware-service Docker image must be rebuilt to bake the `phase-7-provisioning-green` binary.
+This requires registry access and cluster rollout — deferred to the operator.
+
+```bash
+# On the build machine (parent repo root):
+rsync -avz --exclude='.git' --exclude='node_modules' --exclude='data' \
+  ~/southern-iot/ root@10.10.8.140:/root/southern-iot/
+
+# On VM or CI — rebuild with new FIRMWARE_TAG:
+ssh siot-new "cd /root/southern-iot && \
+  docker compose build --no-cache firmware-service && \
+  docker compose up -d --force-recreate firmware-service"
+
+# Verify (replace TOKEN with real API token):
+curl -H "Authorization: Bearer TOKEN" \
+  http://10.10.8.171:30060/v1/builds/phase-7-provisioning-green
+# Expected: HTTP 200 with non-empty binaryUrl and binarySha256
+# (if build-at-image-time was successful)
+```
+
+**k8s cluster deploy:**
+```bash
+# Update firmware-service-env secret with new FIRMWARE_TAG:
+kubectl patch secret firmware-service-env -n firmware \
+  --type='json' -p='[{"op":"replace","path":"/data/FIRMWARE_TAG","value":"'$(echo -n 'phase-7-provisioning-green' | base64)'"}]'
+kubectl rollout restart deployment/firmware-service -n firmware
+kubectl rollout status deployment/firmware-service -n firmware
+```
+
+---
+
+## Phase 7 spike findings — HARDWARE VALIDATED (CLI, 2026-07-01)
+
+Validated on the project RAK3112 (MAC `3c:dc:75:6f:85:dc`, Guardrail §3 #1 board-confirm:
+ESP32-S3 QFN56 rev v0.2, 8 MB PSRAM) via **esptool + pyserial CLI** — not the Chrome
+esptool-js spike. Flash: `esptool write_flash 0x10000 rak3112_rs485_node.bin` (app-only,
+**NO erase** — NVS preserved, `eraseAll:false` honored); hash verified.
+
+**Hardware results:**
+- prov console live — `help` lists `help` + `prov` (modbus|creds|show).
+- `prov creds 3CDC75FFFE6F85DC 0000000000000000 <appKey>` → `OK ... appKey=<redacted 32 hex>`.
+- `prov show` → devEui set, `appKey: <redacted>` (never echoed — T-02-02 holds on-device).
+- Reboot boot log: **`[creds:NVS] DevEUI=3cdc75fffe6f85dc JoinEUI=0000…`**, `PSRAM 8192K`,
+  `[modbus] compiled defaults`, `prov console ready` → lora.cpp NVS-first boot PROVEN.
+- OTAA join with NVS creds → `join failed (-1116)` — expected on bench (test appKey not
+  registered in ChirpStack, no gateway).
+- **NOTE:** built binary `git describe` = `phase-6-modbus-green-16-g226d50` (build predated the
+  phase-7 tag) — functionally phase-7 (prov console present). Gate A firmware-service rebuild
+  MUST build FROM the `phase-7-provisioning-green` tag so version + served artifact match.
+
+02-08 (WebSerial flasher) reads these values. Browser-specific items (A2 esptool-js API,
+A5 Chrome SerialPort survival) still need in-Chrome confirmation.
+
+### Gate A — firmware-service cluster rebuild: CLOSED (2026-07-01)
+
+Rebuilt the in-cluster firmware-service image FROM the `phase-7-provisioning-green` tag
+(detached checkout `c687aa7`; `firmware/` proven byte-identical to `main` HEAD via
+`git diff --stat tag..HEAD -- firmware/` = empty, so the served `.bin` is the same
+artifact hardware-validated above). Built `linux/amd64` via `docker buildx --push` →
+`fahim0173/rak3112-firmware-service:phase-7-provisioning-green` (index
+`sha256:dafa1eed57a97474d7b92546b730ecad25a35001c0b530335f5711ebe1ab7c6e`, amd64 manifest
+`sha256:c61e119304c561fc78e6ce2b484ddaadf44e5dd8ca3a868f30b756cf4650c1a8`). NOTE: the
+Dockerfile `COPY firmware/ …` brings no `.git`, so the earlier `git describe` concern is
+moot for the artifact — the build-arg `FIRMWARE_TAG` + k8s secret set the reported tag.
+
+Rolled out in ns `firmware` (entry `root@10.10.8.168`; legacy VM 10.10.8.140 untouched):
+patched secret `firmware-service-env` `FIRMWARE_TAG`→phase-7, `kubectl set image`→phase-7,
+`rollout status` clean (maxUnavailable:0). New pod `firmware-service-c58884cd7-xp2rt`.
+
+Verified in-pod (`kubectl exec -i … -- python -`; `API_TOKEN` never left the pod):
+`POST /v1/build`→200 warmed the MinIO cache; `GET /v1/builds/phase-7-provisioning-green`→200
+`status:ready`, served-binary **SHA-256
+`8dcedba85093d37d3be88072d2cb296ce8126dbe71d0cb0cf7fc1ac0c951d47b`**, presigned `binaryUrl`
+via external MinIO NodePort `10.10.8.171:30900` (browser-reachable for the 02-08 flasher).
+Regression: `/v1/sensors` = 4 sensors / 2 flashable (mfm384, rsfsjt), unchanged from phase-6.
+
+02-01 is now fully complete (code + hardware + Gate A). 02-08 can pull the served phase-7 binary.
+
+### A1 — Flash offset: RESOLVED
+
+| | |
+|---|---|
+| **Value** | `0x10000` |
+| **Source** | `firmware/build/flasher_args.json` (app offset from ESP-IDF build) |
+| **Type** | App-only binary (no merged bootloader) |
+| **Implication** | `FlashOptions.fileArray[0].address = 0x10000` |
+
+### A2 — MAC read call in esptool-js 0.6.0: PARTIAL (chip MAC readable via CLI; esptool-js API pending 02-08)
+CLI `esptool read-mac` returns `3c:dc:75:6f:85:dc` (EUI-48, colon-hex). Capability proven; the exact
+esptool-js browser call (`chip.readMac` vs `readMac`) still needs in-Chrome confirmation in 02-08.
+
+| | |
+|---|---|
+| **Status** | UNRESOLVED — requires Chrome + RAK3112 |
+| **Question** | Exact API to read EUI-48 MAC from ESPLoader after `.main()` |
+| **Proposed** | `esploader.chip.readMac(esploader)` — most likely; spike probes both `chip.readMac()` and `esploader.readMac()` |
+| **Probe** | `spike.mjs` tries both calls, logs `[A2-PROBE]` output — record which succeeded |
+| **Record here** | MAC read call: `_____________` Return type: `_____________` Format: `_____________` |
+
+### A3 — Line terminator for prov commands: RESOLVED = `\r\n`
+Commands accepted with `\r\n` over USB-Serial-JTAG; `prov show`/`prov creds` echoed + acted.
+
+| | |
+|---|---|
+| **Status** | UNRESOLVED — requires hardware echo |
+| **Question** | Does `esp_console` accept `\r\n` or `\n`? |
+| **Proposed** | `\r\n` (standard VT100 terminal; spike uses `\r\n` first — `[A3-PROBE]`) |
+| **Record here** | Working terminator: `_____________` (if commands ignored, change to `\n`) |
+
+### A4 — Reboot command vs RTS pulse: RESOLVED = NO console reboot cmd → reset line / physical
+CORRECTION to the proposed answer: `restart` is NOT registered (`help` shows only `help` + `prov`);
+`restart` → "Unrecognized command". The flasher MUST reboot via `port.setSignals()` (DTR/RTS → EN
+pulse, as esptool does) or physical RST. There is no `esp_restart` console command either.
+
+| | |
+|---|---|
+| **Status** | UNRESOLVED — requires hardware test |
+| **Question** | Does `esp_console` have a `restart` command? Or should boot-verify use RTS? |
+| **Proposed** | `restart` built-in command (ESP-IDF console registers it by default); spike tries `restart` then `esp_restart` |
+| **Record here** | Working reboot mechanism: `_____________` |
+
+### A5 — Port re-enumeration after reset: CONFIRMED (USB-JTAG re-enumerates; Chrome SerialPort survival pending 02-08)
+On reset the USB-Serial-JTAG device drops + re-adds — an already-open handle goes deaf (a monitor
+had to reopen the port to catch the boot log; port timestamp changed). So after reboot the flasher
+MUST reacquire the port. Whether Chrome's `SerialPort` object survives (`port.open()`) or needs
+`navigator.serial.getPorts()` re-select is the remaining browser-specific detail for 02-08.
+
+| | |
+|---|---|
+| **Status** | UNRESOLVED — requires macOS + Chrome + USB |
+| **Question** | After `hard_reset`, can original `SerialPort` be re-opened with `port.open()`, or must `navigator.serial.getPorts()` re-select? |
+| **Proposed** | `port.open()` on original object survives re-enumeration on macOS (spike tests `[A5-PROBE]`, falls back to `getPorts()`) |
+| **Record here** | Working path: `getPorts()` re-select (0x1001) after re-enum; open succeeds. Delay: ~500 ms after re-enum |
+
+### A1–A5 + console read-back: FULLY RESOLVED in-browser (WebSerial spike, 2026-07-01)
+
+Confirmed on the project RAK3112 (`3c:dc:75:6f:85:dc`) via the `tools/webserial-spike` page in
+Chrome against a local mock firmware-service (served the phase-7 `.bin` + `/v1` endpoints on
+`localhost`, same origin → Web Serial secure context, no cluster/token needed).
+
+| # | Value (resolved) |
+|---|---|
+| **A1** flash offset | `0x10000`, `eraseAll:false`, SHA-256 verified before write (205 KB compressed, ~2.9 s) |
+| **A2** MAC read | `await esploader.chip.readMac(esploader)` → **colon-hex string** `"3c:dc:75:6f:85:dc"` (NOT an array) |
+| **A3** line terminator | `\r\n` — `prov show`/`prov creds` accepted |
+| **A4** reboot | **No console reboot command.** Reset via `port.setSignals()` RTS-pulse (below) |
+| **A5** re-enumeration | USB-JTAG drops+re-adds on reset; `navigator.serial.getPorts()` re-selects the granted PID `0x1001` port; `port.open()` on it succeeds |
+
+**THE KEY FINDING — reset-first, every phase (never leave the board latched).** A bare read of a
+reopened WebSerial port returns **0 bytes** (the CDC console is silent when the board is latched /
+DTR deasserted). Four attempts failed until the board was reset *in-session* first. Proven recipe:
+
+```js
+// after port.open({baudRate:115200}) and reader = port.readable.getReader():
+await port.setSignals({ requestToSend: true,  dataTerminalReady: false }); // EN low  = reset asserted
+await sleep(150);
+await port.setSignals({ requestToSend: false, dataTerminalReady: false }); // release EN -> boot
+await sleep(50);
+await port.setSignals({ dataTerminalReady: true, requestToSend: false });  // DTR asserted = terminal present
+// now the boot log flows: [creds:NVS] DevEUI=..., "Found 8MB PSRAM", modbus, "provisioning console ready", "esp> "
+// send commands with \r\n AFTER the console-ready line; the REPL answers prov show (NVS state).
+```
+
+- Attach the **reader before** the reset so the earliest boot lines (`[creds:NVS]`) are captured.
+- Wait for `provisioning console ready` before sending `prov *` (the app fires LoRa join at boot; give the REPL a ~800 ms settle).
+- CLI cross-check (pyserial): `dtr=True,rts=False` + a real command reads; opening with `dtr=False` triggers a reset. Same DTR/EN semantics as the WebSerial `setSignals` recipe.
+- **esptool-js is fine** — flash + `readMac` worked from the first run; the blocker was raw WebSerial signal handling (outside esptool-js). No need for esp-web-tools.
+
+02-08 NVS phase design: flash → (esptool `hard_reset`) → `getPorts()` re-acquire → **reset-first setSignals** → read boot log for verify markers → send `prov modbus`/`prov creds` → reset again → read boot log for `[creds:NVS]` with the new DevEUI (boot-verify).
+
+### Spike validation checklist (complete on hardware)
+
+- [x] Board MAC matches expected (`3c:dc:75:6f:85:dc`) — T-02-04
+- [x] Flash at 0x10000 completes, `eraseAll:false` confirmed — T-02-01 (esptool write_flash, no erase)
+- [x] Device boots after flash (not bricked, no erase_flash issued)
+- [x] `prov creds` accepted (appKey not echoed) — T-02-02  · [ ] `prov modbus` NOT exercised (creds path only)
+- [x] `prov show` prints devEui + `<redacted>` for appKey
+- [x] Boot log after reboot contains `[creds:NVS]` + `PSRAM` + `modbus`
+- [x] A2, A3, A4, A5 values recorded above (A2/A5 browser-API detail deferred to 02-08)
+- [x] No secrets leaked in serial output (appKey redacted in `prov creds` OK + `prov show`) — browser DevTools check is 02-08
+
+---
 
 ## Post-sign-off note — ADR-001 `<TBD>` hygiene (2026-06-20)
 

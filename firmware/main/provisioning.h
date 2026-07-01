@@ -1,10 +1,12 @@
 /*
- * provisioning.h — on-device provisioning console (7d).
+ * provisioning.h — on-device provisioning commands (7d + ADR-006).
  *
- * Starts a USB-Serial-JTAG REPL (its own task) with prov-* commands that write the NVS 'prov'
- * namespace additively (credentials + Modbus runtime config), preserving the 'lorawan'
- * nonces/session, then restart into field mode. Available in field mode too (re-point a deployed
- * node without erasing NVS). Driven by hand or by tools/provision_nvs.py.
+ * prov-lorawan/-modbus/-profile/-show/-clear/-done write the NVS 'prov' namespace additively
+ * (credentials + Modbus runtime config + a device-profile blob), preserving the 'lorawan'
+ * nonces/session, then restart into field mode. Driven by hand or by tools/provision_nvs.py.
+ *
+ * The single USB-Serial-JTAG REPL is owned by prov_console.cpp (which also hosts the CRM-contract
+ * `prov modbus|creds|show` commands); this module only registers its commands onto it.
  */
 #ifndef PROVISIONING_H
 #define PROVISIONING_H
@@ -13,8 +15,9 @@
 extern "C" {
 #endif
 
-/* Set up + start the provisioning REPL on its own task, then return (non-blocking). */
-void provisioning_console_start(void);
+/* Register the prov-* commands on the already-created esp_console (no REPL create/start). Call
+ * after esp_console_new_repl_* and before esp_console_start_repl (see prov_console_init). */
+void provisioning_register_commands(void);
 
 #ifdef __cplusplus
 }

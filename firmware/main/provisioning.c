@@ -182,16 +182,9 @@ static int cmd_done(int argc, char **argv)
     return 0;
 }
 
-void provisioning_console_start(void)
+/* Register the prov-* commands onto the REPL created + owned by prov_console_init(). */
+void provisioning_register_commands(void)
 {
-    esp_console_repl_t *repl = NULL;
-    esp_console_repl_config_t repl_cfg = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
-    repl_cfg.prompt = "prov>";
-    repl_cfg.max_cmdline_length = 1100; /* a full device-profile blob is ~900 hex chars */
-    esp_console_dev_usb_serial_jtag_config_t hw_cfg =
-        ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_cfg, &repl_cfg, &repl));
-
     const esp_console_cmd_t cmds[] = {
         {.command = "prov-lorawan",
          .help = "<deveui16> <joineui16> <appkey32> — set OTAA credentials",
@@ -211,10 +204,6 @@ void provisioning_console_start(void)
     for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); ++i) {
         ESP_ERROR_CHECK(esp_console_cmd_register(&cmds[i]));
     }
-    esp_console_register_help_command();
-
-    ESP_LOGI(TAG,
-             "provisioning console ready — prov-lorawan / prov-modbus / prov-profile / prov-show / "
-             "prov-clear / prov-done (or tools/provision_nvs.py); nonces/session preserved");
-    ESP_ERROR_CHECK(esp_console_start_repl(repl)); /* runs on its own task; we return */
+    ESP_LOGI(TAG, "prov-* commands registered (prov-lorawan/-modbus/-profile/-show/-clear/-done; "
+                  "or tools/provision_nvs.py); nonces/session preserved");
 }

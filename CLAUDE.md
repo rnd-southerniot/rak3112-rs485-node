@@ -149,11 +149,13 @@ rak3112-rs485-node/                       # firmware repo
   P1-01. First green dual-build for esp32s3.
   ```
 - Pre-commit (local, before push): gitleaks · clang-format · end-of-file-fixer · trailing-whitespace · check-yaml · check-merge-conflict.
-- CI matrix (`.github/workflows/ci.yml`), 4 jobs, all version-pinned per §1:
+- CI matrix (`.github/workflows/ci.yml`), 6 jobs, all version-pinned per §1:
   - `pre-commit` — `pre-commit run --all-files`
   - `idf-build` — ESP-IDF **v5.5.4**, `idf.py build`, artifact = `build/*.bin`
   - `gitleaks` — `gitleaks detect --no-banner --redact` (defence-in-depth even though pre-commit also runs it)
-  - `host-tests` — layout presence-check now; real `ctest` activation lands in Phase 4
+  - `host-tests` — `ctest` over the pure host modules (ring_buffer, modbus_rtu, payload, device_profile)
+  - `device-profiles` — `validate_profiles.py` (+ jsonschema) and `profiles_to_catalog.py --check` (the top-level CRM catalog the FastAPI serves must stay generated-fresh from `device-profiles/profiles/`, ADR-006)
+  - `api-tests` — `pytest tests/unit tests/integration` for the CRM firmware-build service (`api/`, merged from careflow-provisioning)
 - Green CI is a merge gate to `main`. No exceptions.
 
 ---

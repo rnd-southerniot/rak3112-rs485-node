@@ -338,28 +338,47 @@ window.runPhase2 = async function() {
     // ASSUMPTION A5: port.open() succeeds on the original SerialPort object.
     // Alternative: navigator.serial.getPorts() + re-select.
     // Record which path works in RUNBOOK A5.
-    logInfo('[A5-PROBE] Re-opening port at 115200 baud ...');
+    // [A5-PROBE v2] The USB-Serial-JTAG tears down + re-enumerates on hard_reset.
+    // The retained SerialPort handle goes DEAF (open() succeeds but no data flows),
+    // so we must WAIT for the device to re-appear (serial 'connect' event), then
+    // RE-ACQUIRE the fresh port via getPorts() and open THAT.
+    logInfo('[A5-PROBE v2] Waiting for USB re-enumeration (connect event, up to 8s) ...');
+    await new Promise((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      navigator.serial.addEventListener('connect', finish, { once: true });
+      setTimeout(finish, 8000);
+    });
+    // Small settle delay after the connect event before opening.
+    await new Promise(r => setTimeout(r, 500));
 
-    // Wait for re-enumeration.
-    await new Promise(r => setTimeout(r, 3000));
-
-    let portOpened = false;
+    const ports = await navigator.serial.getPorts();
+    logInfo(`[A5-PROBE v2] getPorts() -> ${ports.length} granted port(s)`);
+    // Prefer the native USB-Serial-JTAG (PID 0x1001); else fall back to the last one.
+    g_port = ports.find(p => p.getInfo().usbProductId === 0x1001) || ports[ports.length - 1];
+    if (!g_port) throw new Error('No granted serial port after re-enumeration');
     try {
       await g_port.open({ baudRate: 115200 });
-      logOK('[A5-PROBE] Original SerialPort re-opened successfully.');
-      portOpened = true;
     } catch (e) {
-      logWarn('[A5-PROBE] port.open() on original port failed: ' + e.message);
-      logInfo('[A5-PROBE] Trying navigator.serial.getPorts() re-select ...');
-      const ports = await navigator.serial.getPorts();
-      if (ports.length > 0) {
-        g_port = ports[ports.length - 1]; // most-recently-added port
-        await g_port.open({ baudRate: 115200 });
-        logOK('[A5-PROBE] Re-selected port opened via getPorts().');
-        portOpened = true;
-      }
+      // If it reports already-open (stale), close then reopen.
+      logWarn('[A5-PROBE v2] open() threw (' + e.message + '); retrying after close ...');
+      try { await g_port.close(); } catch (_) {}
+      await new Promise(r => setTimeout(r, 300));
+      await g_port.open({ baudRate: 115200 });
     }
-    if (!portOpened) throw new Error('Could not re-open serial port after flash');
+    logOK('[A5-PROBE v2] Re-acquired port opened.');
+
+    // [A5c-PROBE] Assert DTR so the USB-Serial-JTAG CDC console actually flows.
+    // CLI proof: pyserial dtr=True -> `prov show` responds; WebSerial's default
+    // open leaves DTR deasserted -> zero bytes. requestToSend:false so we do not
+    // pull EN (RTS) and reset the board.
+    try {
+      await g_port.setSignals({ dataTerminalReady: true, requestToSend: false });
+      logOK('[A5c-PROBE] setSignals(DTR=true, RTS=false) asserted.');
+    } catch (e) {
+      logWarn('[A5c-PROBE] setSignals failed: ' + e.message);
+    }
+    await new Promise(r => setTimeout(r, 300));
 
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
@@ -408,7 +427,14 @@ window.runPhase2 = async function() {
     }
 
     // Wait for firmware boot + console prompt.
-    logInfo('Waiting for "esp> " prompt (up to 15s) ...');
+    // NUDGE: the boot banner + first "esp> " print DURING the re-enum wait,
+    // before the reader attaches — the esp_console REPL will not re-print its
+    // prompt unsolicited. Send a bare CRLF to make it echo a fresh "esp> ".
+    // The boot "esp> " already printed during the re-enum wait, and the REPL
+    // does NOT re-echo the prompt on a bare newline (CLI-proven). Send a REAL
+    // command ("prov show") — its output ends with a fresh "esp> " we can catch.
+    logInfo('[A5b-PROBE] Sending "prov show" to elicit a fresh "esp> " (up to 15s) ...');
+    await sendCmd('prov show');
     await waitForLine('esp> ', 15000);
     logOK('Console ready (esp> )');
 
@@ -472,5 +498,94 @@ window.runPhase2 = async function() {
     try { await g_port.close(); } catch (_) {}
   } finally {
     document.getElementById('btn-nvs').disabled = false;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Standalone console test: NO chooser (getPorts on the already-granted port),
+// NO flash. ALWAYS reset the board first (RTS pulse) so it is never latched,
+// then assert DTR and read. Mirrors the CLI-proven recipe.
+// ---------------------------------------------------------------------------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function readUntil(reader, decoder, target, timeoutMs) {
+  let buf = '';
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const race = await Promise.race([
+      reader.read(),
+      new Promise((r) => setTimeout(() => r({ timedOut: true }), 200)),
+    ]);
+    if (race.timedOut) continue;
+    if (race.done) break;
+    if (race.value) {
+      const chunk = decoder.decode(race.value);
+      buf += chunk;
+      appendLog(chunk.replace(/\r/g, ''), 'log-info');
+      if (target && buf.includes(target)) break;
+    }
+  }
+  return buf;
+}
+
+window.testConsole = async function () {
+  let port = null;
+  let reader = null;
+  let writer = null;
+  try {
+    logInfo('[TEST] getPorts() — reuse the granted port (no chooser) ...');
+    const ports = await navigator.serial.getPorts();
+    if (!ports.length) {
+      logErr('[TEST] No granted port. Run "Connect & Flash" once to grant it.');
+      return;
+    }
+    port = ports.find((p) => p.getInfo().usbProductId === 0x1001) || ports[ports.length - 1];
+    await port.open({ baudRate: 115200 });
+    logOK('[TEST] port opened');
+
+    const decoder = new TextDecoder();
+    // Attach the reader FIRST so we catch the earliest boot lines ([creds:NVS]).
+    reader = port.readable.getReader();
+
+    // ALWAYS reset first (user rule) — RTS pulse: assert EN, release -> boot,
+    // then DTR terminal-present. Matches the working CLI reset sequence.
+    logInfo('[TEST] RTS-pulse reset (never leave the board latched) ...');
+    await port.setSignals({ requestToSend: true, dataTerminalReady: false }); // EN asserted (reset)
+    await sleep(150);
+    await port.setSignals({ requestToSend: false, dataTerminalReady: false }); // release EN -> boot
+    await sleep(50);
+    await port.setSignals({ dataTerminalReady: true, requestToSend: false }); // terminal present
+
+    logInfo('[TEST] reading boot log (up to 6s, waiting for console-ready) ...');
+    // Wait for the firmware's "provisioning console ready" line (printed once the
+    // esp_console REPL is up and can accept commands) — not just any "esp>".
+    const boot = await readUntil(reader, decoder, 'provisioning console ready', 6000);
+    logInfo(`[TEST] boot-log bytes: ${boot.length}`);
+    ['[creds:NVS]', 'PSRAM', 'modbus'].forEach((m) =>
+      boot.includes(m) ? logOK(`[TEST] marker present: ${m}`) : logWarn(`[TEST] marker MISSING: ${m}`)
+    );
+
+    // Let the REPL settle (the app fires LoRa join attempts at boot; give the
+    // console task a moment so our command is not interleaved with join logs).
+    await sleep(800);
+
+    // Send a real command to confirm bidirectional console.
+    writer = port.writable.getWriter();
+    await writer.write(new TextEncoder().encode('prov show\r\n'));
+    logInfo('[TEST] > prov show');
+    const resp = await readUntil(reader, decoder, 'NVS Provisioning State', 6000);
+    logInfo(`[TEST] prov-show response bytes: ${resp.length}`);
+    if (resp.includes('NVS Provisioning State') || resp.includes('devEui')) {
+      logOK('[TEST] CONSOLE READ CONFIRMED — reset-first recipe works in WebSerial.');
+    } else {
+      logErr('[TEST] no prov-show response — recipe still not reading.');
+    }
+  } catch (e) {
+    logErr('[TEST] failed: ' + e.message);
+  } finally {
+    try { if (reader) reader.releaseLock(); } catch (_) {}
+    try { if (writer) writer.releaseLock(); } catch (_) {}
+    try { if (port) await port.close(); } catch (_) {}
+    logInfo('[TEST] port closed.');
   }
 };

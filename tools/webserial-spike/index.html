@@ -80,6 +80,12 @@
   <input id="fw-tag" type="text" value="phase-7-provisioning-green" placeholder="phase-7-provisioning-green">
   <button onclick="fetchProtocol()">Fetch Protocol</button>
   <div id="protocol-display" style="margin-top:8px;color:#aaa;font-size:12px;"></div>
+  <hr style="border-color:#444;margin:12px 0;">
+  <button onclick="testConsole()" style="background:#1a4a8a;">Test Console (reset-first, no pick)</button>
+  <div style="font-size:12px;color:#888;margin-top:6px;">
+    Uses getPorts() on the already-granted port (no chooser). ALWAYS resets the board
+    first (RTS pulse) so it is never latched, then asserts DTR and reads the boot log + prov show.
+  </div>
 </div>
 
 <div class="section">

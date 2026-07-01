@@ -706,7 +706,43 @@ MUST reacquire the port. Whether Chrome's `SerialPort` object survives (`port.op
 | **Status** | UNRESOLVED — requires macOS + Chrome + USB |
 | **Question** | After `hard_reset`, can original `SerialPort` be re-opened with `port.open()`, or must `navigator.serial.getPorts()` re-select? |
 | **Proposed** | `port.open()` on original object survives re-enumeration on macOS (spike tests `[A5-PROBE]`, falls back to `getPorts()`) |
-| **Record here** | Working path: `_____________` Delay needed: `_____________` ms |
+| **Record here** | Working path: `getPorts()` re-select (0x1001) after re-enum; open succeeds. Delay: ~500 ms after re-enum |
+
+### A1–A5 + console read-back: FULLY RESOLVED in-browser (WebSerial spike, 2026-07-01)
+
+Confirmed on the project RAK3112 (`3c:dc:75:6f:85:dc`) via the `tools/webserial-spike` page in
+Chrome against a local mock firmware-service (served the phase-7 `.bin` + `/v1` endpoints on
+`localhost`, same origin → Web Serial secure context, no cluster/token needed).
+
+| # | Value (resolved) |
+|---|---|
+| **A1** flash offset | `0x10000`, `eraseAll:false`, SHA-256 verified before write (205 KB compressed, ~2.9 s) |
+| **A2** MAC read | `await esploader.chip.readMac(esploader)` → **colon-hex string** `"3c:dc:75:6f:85:dc"` (NOT an array) |
+| **A3** line terminator | `\r\n` — `prov show`/`prov creds` accepted |
+| **A4** reboot | **No console reboot command.** Reset via `port.setSignals()` RTS-pulse (below) |
+| **A5** re-enumeration | USB-JTAG drops+re-adds on reset; `navigator.serial.getPorts()` re-selects the granted PID `0x1001` port; `port.open()` on it succeeds |
+
+**THE KEY FINDING — reset-first, every phase (never leave the board latched).** A bare read of a
+reopened WebSerial port returns **0 bytes** (the CDC console is silent when the board is latched /
+DTR deasserted). Four attempts failed until the board was reset *in-session* first. Proven recipe:
+
+```js
+// after port.open({baudRate:115200}) and reader = port.readable.getReader():
+await port.setSignals({ requestToSend: true,  dataTerminalReady: false }); // EN low  = reset asserted
+await sleep(150);
+await port.setSignals({ requestToSend: false, dataTerminalReady: false }); // release EN -> boot
+await sleep(50);
+await port.setSignals({ dataTerminalReady: true, requestToSend: false });  // DTR asserted = terminal present
+// now the boot log flows: [creds:NVS] DevEUI=..., "Found 8MB PSRAM", modbus, "provisioning console ready", "esp> "
+// send commands with \r\n AFTER the console-ready line; the REPL answers prov show (NVS state).
+```
+
+- Attach the **reader before** the reset so the earliest boot lines (`[creds:NVS]`) are captured.
+- Wait for `provisioning console ready` before sending `prov *` (the app fires LoRa join at boot; give the REPL a ~800 ms settle).
+- CLI cross-check (pyserial): `dtr=True,rts=False` + a real command reads; opening with `dtr=False` triggers a reset. Same DTR/EN semantics as the WebSerial `setSignals` recipe.
+- **esptool-js is fine** — flash + `readMac` worked from the first run; the blocker was raw WebSerial signal handling (outside esptool-js). No need for esp-web-tools.
+
+02-08 NVS phase design: flash → (esptool `hard_reset`) → `getPorts()` re-acquire → **reset-first setSignals** → read boot log for verify markers → send `prov modbus`/`prov creds` → reset again → read boot log for `[creds:NVS]` with the new DevEUI (boot-verify).
 
 ### Spike validation checklist (complete on hardware)
 

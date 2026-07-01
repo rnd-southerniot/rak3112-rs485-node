@@ -12,6 +12,8 @@
 #include "freertos/task.h"
 #include "nvs.h"
 
+#include "profile_store.h"
+
 static const char *TAG = "prov";
 #define PROV_NS "prov"
 
@@ -91,6 +93,34 @@ static int cmd_modbus(int argc, char **argv)
     return 0;
 }
 
+/* prov-profile <hexblob> — store a dp_serialize() device-profile blob (validated before persist).
+ */
+static int cmd_profile(int argc, char **argv)
+{
+    if (argc != 2) {
+        printf("ERR usage: prov-profile <hexblob>\n");
+        return 1;
+    }
+    const size_t hexlen = strlen(argv[1]);
+    if (hexlen < 2 || (hexlen % 2) != 0 || (hexlen / 2) > PROFILE_BLOB_MAX) {
+        printf("ERR blob hex length %u invalid (max %u bytes)\n", (unsigned)hexlen,
+               (unsigned)PROFILE_BLOB_MAX);
+        return 1;
+    }
+    static uint8_t blob[PROFILE_BLOB_MAX];
+    const size_t nbytes = hexlen / 2;
+    if (!parse_hex_bytes(argv[1], blob, nbytes)) {
+        printf("ERR blob not valid hex\n");
+        return 1;
+    }
+    if (!profile_store_save(blob, nbytes)) {
+        printf("ERR profile rejected (bad version/CRC/bounds) or NVS error\n");
+        return 1;
+    }
+    printf("OK profile stored (%u B)\n", (unsigned)nbytes);
+    return 0;
+}
+
 static int cmd_show(int argc, char **argv)
 {
     (void)argc;
@@ -114,10 +144,16 @@ static int cmd_show(int argc, char **argv)
     nvs_get_u8(h, "unit", &unit);
     nvs_get_u32(h, "intv", &intv);
     nvs_close(h);
+    uint8_t pdev = 0, pmeas = 0;
+    const bool hasprofile = profile_store_present(&pdev, &pmeas);
     printf("prov: deveui=%016llx joineui=%016llx appkey=%s | dev=%u baud=%lu par=%u unit=%u "
-           "intv=%lu\n",
+           "intv=%lu | profile=%s",
            (unsigned long long)de, (unsigned long long)je, hasak ? "set" : "unset", (unsigned)dev,
-           (unsigned long)baud, (unsigned)par, (unsigned)unit, (unsigned long)intv);
+           (unsigned long)baud, (unsigned)par, (unsigned)unit, (unsigned long)intv,
+           hasprofile ? "" : "none\n");
+    if (hasprofile) {
+        printf("device_byte=0x%02X,%u measurands\n", (unsigned)pdev, (unsigned)pmeas);
+    }
     return 0;
 }
 
@@ -151,7 +187,7 @@ void provisioning_console_start(void)
     esp_console_repl_t *repl = NULL;
     esp_console_repl_config_t repl_cfg = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
     repl_cfg.prompt = "prov>";
-    repl_cfg.max_cmdline_length = 200;
+    repl_cfg.max_cmdline_length = 1100; /* a full device-profile blob is ~900 hex chars */
     esp_console_dev_usb_serial_jtag_config_t hw_cfg =
         ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_cfg, &repl_cfg, &repl));
@@ -163,6 +199,9 @@ void provisioning_console_start(void)
         {.command = "prov-modbus",
          .help = "<dev 0|1> <baud> <par 0|1|2> <unit> <interval_s> — set field config",
          .func = cmd_modbus},
+        {.command = "prov-profile",
+         .help = "<hexblob> — store a device-profile blob (validated)",
+         .func = cmd_profile},
         {.command = "prov-show",
          .help = "print current provisioning (appkey redacted)",
          .func = cmd_show},
@@ -175,7 +214,7 @@ void provisioning_console_start(void)
     esp_console_register_help_command();
 
     ESP_LOGI(TAG,
-             "provisioning console ready — prov-lorawan / prov-modbus / prov-show / prov-clear "
-             "/ prov-done (or tools/provision_nvs.py); nonces/session preserved");
+             "provisioning console ready — prov-lorawan / prov-modbus / prov-profile / prov-show / "
+             "prov-clear / prov-done (or tools/provision_nvs.py); nonces/session preserved");
     ESP_ERROR_CHECK(esp_console_start_repl(repl)); /* runs on its own task; we return */
 }

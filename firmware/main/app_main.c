@@ -12,11 +12,13 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
+#include "device_profile.h"
 #include "gpio_remap.h"
 #include "lora.h"
 #include "meter.h"
 #include "ota.h"
 #include "payload.h"
+#include "profile_store.h"
 #include "provisioning.h"
 #if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT || !CONFIG_APP_FIELD_SIMULATE
 #include "modbus_master.h"
@@ -342,6 +344,18 @@ static void load_field_cfg(field_cfg_t *c)
     }
 }
 
+/* Persist a scan-discovered Modbus slave ID into NVS 'prov' so the next boot skips the scan. */
+static void persist_unit(uint8_t unit)
+{
+    nvs_handle_t h;
+    if (nvs_open("prov", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, "unit", unit);
+        nvs_commit(h);
+        nvs_close(h);
+        ESP_LOGI(TAG, "persisted discovered unit %u to NVS", (unsigned)unit);
+    }
+}
+
 /*
  * Field application: sample the configured device (real Modbus or simulated) then LoRaWAN-uplink a
  * compact ADR-005 payload, every interval. Config from NVS 'prov' (else Kconfig). Assumes lora is
@@ -354,7 +368,19 @@ static void run_field_app(void)
     const TickType_t period = pdMS_TO_TICKS(1000u * cfg.interval_s);
     const char *dev_name = (cfg.device == FIELD_DEV_RSFSJT) ? "RS-FSJT" : "MFM384";
 
+    /* ADR-006 increment 3: if the CRM has provisioned a device profile into NVS, the generic
+     * profile-driven reader takes over (any device, no firmware rebuild); else the compiled path.
+     */
+    bool have_profile = false;
+    const device_profile_t *prof = NULL;
 #if !CONFIG_APP_FIELD_SIMULATE
+    static dp_profile_storage_t s_prof;
+    have_profile = profile_store_load(&s_prof);
+    if (have_profile) {
+        prof = &s_prof.profile;
+        cfg.baud = prof->baud; /* profile bus params override the per-key NVS config */
+        cfg.parity = (prof->parity == 'E') ? 1u : (prof->parity == 'O') ? 2u : 0u;
+    }
     const rs485_config_t rcfg = {
         .port = UART_NUM_1,
         .tx_gpio = PIN_RS485_TX,
@@ -365,9 +391,33 @@ static void run_field_app(void)
         .rx_buffer_size = 256,
     };
     ESP_ERROR_CHECK(rs485_init(&rcfg));
-    ESP_LOGI(TAG, "field app: REAL Modbus %s, unit %u @ %lu %s, %lus interval [cfg:%s]", dev_name,
-             (unsigned)cfg.unit, (unsigned long)cfg.baud, parity_label(cfg.parity),
-             (unsigned long)cfg.interval_s, cfg.from_nvs ? "NVS" : "build-default");
+    if (have_profile) {
+        /* Auto-discover the slave ID (ADR-006 incr 4): the profile omits it (varies per site). Try
+         * the configured unit first (fast), else scan the bus; persist the discovery for next boot.
+         */
+        int found = meter_scan_for_unit(UART_NUM_1, prof, cfg.unit, cfg.unit, 300);
+        if (found < 0) {
+            ESP_LOGW(TAG, "configured unit %u silent — scanning bus 1..%d for the device...",
+                     (unsigned)cfg.unit, CONFIG_APP_FIELD_SCAN_ID_HI);
+            found =
+                meter_scan_for_unit(UART_NUM_1, prof, 1, (uint8_t)CONFIG_APP_FIELD_SCAN_ID_HI, 300);
+        }
+        if (found > 0) {
+            if ((uint8_t)found != cfg.unit) {
+                persist_unit((uint8_t)found);
+            }
+            cfg.unit = (uint8_t)found;
+        }
+        ESP_LOGI(TAG,
+                 "field app: PROFILE-DRIVEN device_byte=0x%02X, %u measurands, unit %u%s @ %lu %s, "
+                 "%lus interval",
+                 prof->device_byte, prof->n_meas, (unsigned)cfg.unit, found > 0 ? "" : " (none!)",
+                 (unsigned long)cfg.baud, parity_label(cfg.parity), (unsigned long)cfg.interval_s);
+    } else {
+        ESP_LOGI(TAG, "field app: REAL Modbus %s, unit %u @ %lu %s, %lus interval [cfg:%s]",
+                 dev_name, (unsigned)cfg.unit, (unsigned long)cfg.baud, parity_label(cfg.parity),
+                 (unsigned long)cfg.interval_s, cfg.from_nvs ? "NVS" : "build-default");
+    }
 #else
     ESP_LOGW(TAG,
              "field app: SIMULATED %s (no Modbus), %lus interval [cfg:%s] — uplinks flagged "
@@ -384,11 +434,22 @@ static void run_field_app(void)
 
     for (uint32_t tick = 0;; ++tick) {
         esp_task_wdt_reset();
-        uint8_t buf[PAYLOAD_MAX];
+        uint8_t buf[53]; /* AS923 DR3 cap; profile payloads run up to 47 B (DSE) */
         size_t len = 0;
         uint8_t flags = 0;
 
-        if (cfg.device == FIELD_DEV_MFM384) {
+        if (have_profile) {
+            float values[DP_MAX_MEAS];
+            if (meter_read_profile(UART_NUM_1, cfg.unit, prof, values, DP_MAX_MEAS) != ESP_OK) {
+                flags |= TELEMETRY_FLAG_STALE;
+                ESP_LOGW(TAG, "[%lu] profile read incomplete — uplinking stale-flagged",
+                         (unsigned long)tick);
+            }
+            len = dp_encode_payload(prof, values, flags, buf, sizeof(buf));
+            ESP_LOGI(TAG, "[%lu] profile dev=0x%02X %u meas, v[0]=%.2f -> %u B",
+                     (unsigned long)tick, prof->device_byte, prof->n_meas,
+                     prof->n_meas ? values[0] : 0.0f, (unsigned)len);
+        } else if (cfg.device == FIELD_DEV_MFM384) {
             mfm384_sample_t s = {0};
 #if CONFIG_APP_FIELD_SIMULATE
             meter_sim_mfm384(tick, &s);

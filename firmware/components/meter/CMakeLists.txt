@@ -2,5 +2,5 @@
 idf_component_register(
     SRCS "meter.c"
     INCLUDE_DIRS "include"
-    REQUIRES esp_driver_uart payload modbus rs485
+    REQUIRES esp_driver_uart payload modbus rs485 device_profile
 )

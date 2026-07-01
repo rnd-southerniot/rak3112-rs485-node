@@ -39,3 +39,14 @@ target_include_directories(test_payload PRIVATE
     ${FW_ROOT}/components/payload/include
 )
 add_test(NAME payload COMMAND test_payload)
+
+# ADR-006: device_profile (profile-driven decode + generic ADR-005 encode). Pure C.
+add_executable(test_device_profile
+    test_device_profile.c
+    ${FW_ROOT}/components/device_profile/device_profile.c
+)
+target_include_directories(test_device_profile PRIVATE
+    ${FW_ROOT}/components/device_profile/include
+    ${FW_ROOT}/components/payload/include
+)
+add_test(NAME device_profile COMMAND test_device_profile)

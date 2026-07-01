@@ -1,16 +1,17 @@
 {
+  "_generated_by": "device-profiles/profiles_to_catalog.py \u2014 do not hand-edit",
   "profileKey": "honeywell-eem400",
-  "displayName": "Honeywell EEM400 Energy Meter",
+  "displayName": "Honeywell EEM400C-D-MO",
   "manufacturer": "Honeywell",
-  "model": "EEM400",
+  "model": "EEM400C-D-MO",
   "deviceByte": 3,
   "modbus": {
-    "baud": 9600,
-    "parity": "N",
+    "baud": 19200,
+    "parity": "E",
     "stopBits": 1,
     "functionCode": 3,
-    "wordOrder": "AB"
+    "wordOrder": "ABCD"
   },
-  "payloadBytes": 20,
-  "isActive": false
+  "payloadBytes": 43,
+  "isActive": true
 }

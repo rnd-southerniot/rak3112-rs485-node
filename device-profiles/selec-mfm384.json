@@ -1,8 +1,9 @@
 {
+  "_generated_by": "device-profiles/profiles_to_catalog.py \u2014 do not hand-edit",
   "profileKey": "selec-mfm384",
-  "displayName": "SELEC MFM384 3-Phase Energy Meter",
-  "manufacturer": "SELEC",
-  "model": "MFM384",
+  "displayName": "Selec MFM384-C",
+  "manufacturer": "Selec",
+  "model": "MFM384-C",
   "deviceByte": 1,
   "modbus": {
     "baud": 9600,
@@ -11,6 +12,6 @@
     "functionCode": 4,
     "wordOrder": "CDAB"
   },
-  "payloadBytes": 19,
+  "payloadBytes": 39,
   "isActive": true
 }

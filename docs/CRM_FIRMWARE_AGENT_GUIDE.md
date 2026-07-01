@@ -1,5 +1,11 @@
 # CRM Developer Guide — driving a Claude agent to build & flash node firmware
 
+> **⚠️ Read [`CRM_PROVISIONING_WORKFLOW.md`](CRM_PROVISIONING_WORKFLOW.md) first — it is the source
+> of truth for the current factory→field order of operations** (DevEUI-from-MAC, scan-before-join,
+> compiled-per-build profile, QR-triggered ChirpStack registration). This guide's **agent
+> mechanics** (prompt, inputs, hardware-safety gates, structured result, failure handling) still
+> apply, but where the *sequence* here differs from the workflow doc, the workflow doc wins.
+>
 > **Audience:** the `crm.siot.solutions` developer.
 > **Goal:** how to instruct a Claude Code agent, from the CRM provisioning workflow, to **build →
 > safety-gated flash → provision → verify** a `rak3112-rs485-node` using this repo — with no

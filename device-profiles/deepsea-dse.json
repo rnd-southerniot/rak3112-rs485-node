@@ -1,0 +1,16 @@
+{
+  "profileKey": "deepsea-dse",
+  "displayName": "DeepSea DSE Generator Controller",
+  "manufacturer": "DeepSea",
+  "model": "DSE",
+  "deviceByte": 4,
+  "modbus": {
+    "baud": 9600,
+    "parity": "N",
+    "stopBits": 1,
+    "functionCode": 3,
+    "wordOrder": "AB"
+  },
+  "payloadBytes": 24,
+  "isActive": false
+}

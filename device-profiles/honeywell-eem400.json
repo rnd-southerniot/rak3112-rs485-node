@@ -1,0 +1,16 @@
+{
+  "profileKey": "honeywell-eem400",
+  "displayName": "Honeywell EEM400 Energy Meter",
+  "manufacturer": "Honeywell",
+  "model": "EEM400",
+  "deviceByte": 3,
+  "modbus": {
+    "baud": 9600,
+    "parity": "N",
+    "stopBits": 1,
+    "functionCode": 3,
+    "wordOrder": "AB"
+  },
+  "payloadBytes": 20,
+  "isActive": false
+}

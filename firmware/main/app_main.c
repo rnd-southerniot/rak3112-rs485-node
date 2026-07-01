@@ -18,6 +18,7 @@
 #include "meter.h"
 #include "ota.h"
 #include "payload.h"
+#include "prov_console.h"
 #include "profile_store.h"
 #include "provisioning.h"
 #if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT || !CONFIG_APP_FIELD_SIMULATE
@@ -572,8 +573,8 @@ void app_main(void)
 #endif
 
 #if CONFIG_APP_PROVISIONING_CONSOLE
-    provisioning_console_start(); /* prov-* REPL on its own task; available in field mode too */
-    ota_register_commands();      /* ota-status / ota-activate on the same console */
+    prov_console_init();     /* single esp> REPL: CRM `prov` contract + main's prov-* commands */
+    ota_register_commands(); /* ota-status / ota-activate on the same console */
 #endif
 
     /* 7d: with no OTAA credentials (empty NVS 'prov' + placeholder compiled key), don't bogus-join

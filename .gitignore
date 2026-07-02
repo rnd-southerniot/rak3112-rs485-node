@@ -50,3 +50,8 @@ firmware/main/lora_credentials.h
 
 # clangd / editor index cache
 .cache/
+
+# session/hook artifacts (local only)
+.claude/data/
+logs/
+firmware/logs/

@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 from api.config import get_settings
 from api.routers import builds as builds_module
+from api.routers import flash as flash_module
 from api.routers import sensors as sensors_module
 from api.services.profiles import load_sensors
 from api.services.storage import make_minio_clients
@@ -191,3 +192,4 @@ async def healthz() -> dict:
 
 app.include_router(sensors_module.router)
 app.include_router(builds_module.router)
+app.include_router(flash_module.router)

@@ -49,4 +49,5 @@ target_include_directories(test_device_profile PRIVATE
     ${FW_ROOT}/components/device_profile/include
     ${FW_ROOT}/components/payload/include
 )
+target_link_libraries(test_device_profile m) # dp_simulate uses sinf (libm on Linux/CI)
 add_test(NAME device_profile COMMAND test_device_profile)

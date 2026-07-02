@@ -295,11 +295,12 @@ typedef struct {
     bool from_nvs; /* any field came from NVS */
 } field_cfg_t;
 
-static uart_parity_t parity_enum(uint8_t p)
+/* Real-path helpers (unused in a SIMULATE build, which has no bus). */
+__attribute__((unused)) static uart_parity_t parity_enum(uint8_t p)
 {
     return p == 1 ? UART_PARITY_EVEN : (p == 2 ? UART_PARITY_ODD : UART_PARITY_DISABLE);
 }
-static const char *parity_label(uint8_t p)
+__attribute__((unused)) static const char *parity_label(uint8_t p)
 {
     return p == 1 ? "8E1" : (p == 2 ? "8O1" : "8N1");
 }
@@ -345,8 +346,9 @@ static void load_field_cfg(field_cfg_t *c)
     }
 }
 
-/* Persist a scan-discovered Modbus slave ID into NVS 'prov' so the next boot skips the scan. */
-static void persist_unit(uint8_t unit)
+/* Persist a scan-discovered Modbus slave ID into NVS 'prov' so the next boot skips the scan.
+ * Discovery-path only — unused in a SIMULATE build. */
+__attribute__((unused)) static void persist_unit(uint8_t unit)
 {
     nvs_handle_t h;
     if (nvs_open("prov", NVS_READWRITE, &h) == ESP_OK) {
@@ -400,16 +402,16 @@ static void run_field_app(void)
     const TickType_t period = pdMS_TO_TICKS(1000u * cfg.interval_s);
     const char *dev_name = (cfg.device == FIELD_DEV_RSFSJT) ? "RS-FSJT" : "MFM384";
 
-    bool have_profile = false;
-    const device_profile_t *prof = NULL;
-#if !CONFIG_APP_FIELD_SIMULATE
+    /* A provisioned profile drives both the real read and the simulator (loaded in either mode). */
     static dp_profile_storage_t s_prof;
-    have_profile = profile_store_load(&s_prof);
+    const bool have_profile = profile_store_load(&s_prof);
+    const device_profile_t *prof = NULL;
     if (have_profile) {
         prof = &s_prof.profile;
         cfg.baud = prof->baud; /* profile bus params override the per-key NVS config */
         cfg.parity = (prof->parity == 'E') ? 1u : (prof->parity == 'O') ? 2u : 0u;
     }
+#if !CONFIG_APP_FIELD_SIMULATE
     const rs485_config_t rcfg = {
         .port = UART_NUM_1,
         .tx_gpio = PIN_RS485_TX,
@@ -421,8 +423,15 @@ static void run_field_app(void)
     };
     ESP_ERROR_CHECK(rs485_init(&rcfg));
 #else
-    ESP_LOGW(TAG, "field app: SIMULATED %s (no Modbus) — join immediately, %lus interval", dev_name,
-             (unsigned long)cfg.interval_s);
+    if (have_profile) {
+        ESP_LOGW(TAG,
+                 "field app: SIMULATED PROFILE device_byte=0x%02X (%u meas, no Modbus) — join "
+                 "immediately, %lus interval",
+                 prof->device_byte, prof->n_meas, (unsigned long)cfg.interval_s);
+    } else {
+        ESP_LOGW(TAG, "field app: SIMULATED %s (no Modbus) — join immediately, %lus interval",
+                 dev_name, (unsigned long)cfg.interval_s);
+    }
 #endif
 
     bool joined = false;
@@ -473,7 +482,9 @@ static void run_field_app(void)
         }
 
         field_wdt_arm(); /* armed only for the steady-state read loop (not discovery/join) */
+#if !CONFIG_APP_FIELD_SIMULATE
         int silent = 0;
+#endif
 
         for (uint32_t tick = 0;; ++tick) { /* (3) read + uplink */
             esp_task_wdt_reset();
@@ -484,6 +495,11 @@ static void run_field_app(void)
 
             if (have_profile) {
                 float values[DP_MAX_MEAS];
+#if CONFIG_APP_FIELD_SIMULATE
+                dp_simulate(tick, prof, values,
+                            DP_MAX_MEAS); /* no meter — synthesized per profile */
+                flags |= TELEMETRY_FLAG_SIMULATED;
+#else
                 if (meter_read_profile(UART_NUM_1, cfg.unit, prof, values, DP_MAX_MEAS) != ESP_OK) {
                     flags |= TELEMETRY_FLAG_STALE;
                     if (++silent >= 3) { /* sensor went silent → drop back to discovery */
@@ -494,6 +510,7 @@ static void run_field_app(void)
                 } else {
                     silent = 0;
                 }
+#endif
                 len = dp_encode_payload(prof, values, flags, buf, sizeof(buf));
                 ESP_LOGI(TAG, "[%lu] profile dev=0x%02X %u meas, v[0]=%.2f -> %u B",
                          (unsigned long)tick, prof->device_byte, prof->n_meas,

@@ -209,9 +209,39 @@ static void test_blob_matches_python(void)
     CHECK(mismatch == 0);
 }
 
+static void test_simulate(void)
+{
+    /* PROFILE fields: [0]v1n u16 x10, [1]v2n u16 x10, [2]v3n u16 x10, [3]kw i16 x10,
+     * [4]freq u16 x100, [5]kwh u32 x100. enc_nominal(u16)=3000, (u32)=100000. */
+    float v[6] = {0};
+    dp_simulate(0, &PROFILE, v, 6);
+    /* At tick 0 the FIRST field's value == enc_nominal/scale exactly (sin(0)=0): 3000/10 = 300. */
+    CHECK(v[0] == 300.0f);
+    /* Every carried measurand is non-zero and within +/-10% of its field nominal. */
+    CHECK(v[1] > 270.0f && v[1] < 330.0f);  /* v2n: 300 +/- 8% */
+    CHECK(v[3] > 270.0f && v[3] < 330.0f);  /* kw:  300 +/- 8% (i16) */
+    CHECK(v[4] > 27.0f && v[4] < 33.0f);    /* freq: 3000/100=30 +/- 8% */
+    CHECK(v[5] > 900.0f && v[5] < 1100.0f); /* kwh: 100000/100=1000 +/- 8% */
+    /* Deterministic. */
+    float v2[6] = {0};
+    dp_simulate(0, &PROFILE, v2, 6);
+    CHECK(memcmp(v, v2, sizeof(v)) == 0);
+    /* Encodes to a valid frame; v1n=300 -> wire 3000 = 0x0BB8. */
+    uint8_t buf[64] = {0};
+    const size_t n = dp_encode_payload(&PROFILE, v, TELEMETRY_FLAG_SIMULATED, buf, sizeof(buf));
+    CHECK(n == 17u);
+    CHECK(buf[2] == TELEMETRY_FLAG_SIMULATED);
+    CHECK(buf[3] == 0x0B && buf[4] == 0xB8);
+    /* n_values < n_meas is rejected (values untouched). */
+    float small[3] = {-1.0f, -1.0f, -1.0f};
+    dp_simulate(0, &PROFILE, small, 3);
+    CHECK(small[0] == -1.0f);
+}
+
 int main(void)
 {
     test_dtype_regs();
+    test_simulate();
     test_decode_16();
     test_decode_32_word_orders();
     test_encode_payload();

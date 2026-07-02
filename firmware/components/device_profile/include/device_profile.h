@@ -96,6 +96,16 @@ float dp_decode(const uint16_t *regs, dp_dtype_t type, dp_word_t word, float sca
 size_t dp_encode_payload(const device_profile_t *profile, const float *values, uint8_t flags,
                          uint8_t *out, size_t cap);
 
+/*
+ * Fill `values[0..n_meas-1]` with plausible, deterministic, time-varying SIMULATED engineering data
+ * for a profile — so the profile → encode → decode path can be validated over LoRaWAN with NO
+ * physical device (any profile, incl. ones whose meter isn't on hand). Each carried measurand's
+ * magnitude is sized from its payload field (encoding + scale) so encoded values don't saturate and
+ * decode to moderate numbers; a per-field sinusoid gives variation. Not physically unit-accurate
+ * (the runtime profile has no units) — always tag the uplink TELEMETRY_FLAG_SIMULATED. Pure/no-I/O.
+ */
+void dp_simulate(uint32_t tick, const device_profile_t *p, float *values, size_t n_values);
+
 /* ---------------------------------------------------------------------------
  * NVS profile blob (ADR-006 increment 2): a versioned, CRC-checked, endianness-
  * independent serialization of a device_profile_t. The CRM serializes a profile and pushes the

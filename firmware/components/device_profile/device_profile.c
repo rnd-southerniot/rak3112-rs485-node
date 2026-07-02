@@ -4,6 +4,7 @@
  */
 #include "device_profile.h"
 
+#include <math.h>
 #include <string.h>
 
 #include "telemetry.h" /* TELEMETRY_SCHEMA_VERSION, TELEMETRY_HEADER_LEN */
@@ -200,6 +201,49 @@ size_t dp_encode_payload(const device_profile_t *profile, const float *values, u
         put_field(&out[TELEMETRY_HEADER_LEN + f->offset], f->enc, values[f->value_index], f->scale);
     }
     return total;
+}
+
+/* Nominal wire value per encoding (~40% of the positive range) — keeps simulated engineering values
+ * off the field limits so they encode without saturating and decode to sensible magnitudes. */
+static float enc_nominal(dp_enc_t e)
+{
+    switch (e) {
+    case DP_ENC_U8:
+    case DP_ENC_I8:
+        return 100.0f;
+    case DP_ENC_U16:
+    case DP_ENC_I16:
+        return 3000.0f;
+    case DP_ENC_U32:
+    case DP_ENC_I32:
+        return 100000.0f;
+    default:
+        return 1.0f;
+    }
+}
+
+void dp_simulate(uint32_t tick, const device_profile_t *p, float *values, size_t n_values)
+{
+    if (p == NULL || values == NULL || n_values < p->n_meas) {
+        return;
+    }
+    for (uint8_t i = 0; i < p->n_meas; ++i) {
+        values[i] = 0.0f; /* measurands not carried in the payload stay 0 */
+    }
+    /* Size each measurand's value from the payload field that carries it (encoding + scale), so the
+     * encoded frame doesn't saturate and decodes to a moderate value; a gentle per-field sinusoid
+     * gives deterministic variation. At tick 0 the first field's value == enc_nominal/scale
+     * exactly. */
+    for (uint8_t f = 0; f < p->n_fields; ++f) {
+        const dp_field_t *fld = &p->fields[f];
+        if (fld->value_index >= p->n_meas) {
+            continue;
+        }
+        const float scale = (fld->scale != 0.0f) ? fld->scale : 1.0f;
+        const float nominal = enc_nominal(fld->enc) / scale;
+        const float phase = (float)tick * 0.10f + (float)f * 0.70f;
+        values[fld->value_index] = nominal * (1.0f + 0.08f * sinf(phase));
+    }
 }
 
 /* ----------------------------------------------------------------- NVS blob */

@@ -1,0 +1,9 @@
+# Bench profile: PROFILE-DRIVEN SIMULATION — validate ANY provisioned device profile end-to-end over
+# LoRaWAN with NO physical meter (EEM400/DSE/MFM384/...). Provision the profile blob first
+# (prov-profile <hex> from device-profiles/profile_to_blob.py), then build+flash this:
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.sim-profile" build flash monitor
+# The field app skips the Modbus scan/read, joins immediately, and uplinks dp_simulate() data per the
+# profile (SIMULATED flag set) — decode it with device-profiles/chirpstack_fleet_decoder.js.
+# With no profile provisioned it falls back to the compiled MFM384 simulator.
+CONFIG_APP_FIELD_SIMULATE=y
+CONFIG_APP_FIELD_SAMPLE_INTERVAL_S=60

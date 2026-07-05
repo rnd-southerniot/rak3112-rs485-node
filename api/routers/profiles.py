@@ -12,32 +12,29 @@ test cross-checks against), loaded by file path because the directory name is
 not a valid python package name.
 """
 import importlib.util
+import json
 import logging
 import re
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.auth import verify_bearer
+from api.products import resolve_product
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(verify_bearer)])
 
-_APP_ROOT = Path(__file__).resolve().parent.parent.parent
-_DP_ROOT = _APP_ROOT / "device-profiles"
-# Full firmware profiles (bus/defaults/scan/payload schema) live in profiles/;
-# the top-level *.json files are the CRM catalog variants and cannot serialize.
-_PROFILES_DIR = _DP_ROOT / "profiles"
 _PROFILE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 
-@lru_cache(maxsize=1)
-def _blob_module():
-    """Load device-profiles/profile_to_blob.py as a module (hyphenated dir)."""
-    path = _DP_ROOT / "profile_to_blob.py"
-    spec = importlib.util.spec_from_file_location("profile_to_blob", path)
+@lru_cache(maxsize=4)
+def _blob_module(path: str):
+    """Load a product's profile_to_blob.py as a module (cached per path; hyphenated dir)."""
+    spec = importlib.util.spec_from_file_location(f"profile_to_blob_{abs(hash(path))}", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load profile serializer at {path}")
     mod = importlib.util.module_from_spec(spec)
@@ -45,32 +42,57 @@ def _blob_module():
     return mod
 
 
+def _not_found(profile_key: str) -> HTTPException:
+    return HTTPException(
+        status_code=404,
+        detail={"error": {"code": "not_found", "message": f"Unknown device profile '{profile_key}'."}},
+    )
+
+
 @router.get("/profile-blob/{profile_key}")
-async def get_profile_blob(profile_key: str) -> dict:
+async def get_profile_blob(
+    profile_key: str,
+    request: Request,
+    product: Optional[str] = Query(default=None),
+) -> dict:
     """
-    Return the NVS profile blob for one device profile: hex bytes ready for
-    `prov-profile <hex>`, plus the device_byte the flasher asserts back via
-    `prov-show` after the boot-verify reset.
+    Return the NVS profile blob for one device profile: hex bytes ready for `prov-profile <hex>`,
+    plus the device_byte the flasher asserts back via `prov-show`. `?product=` defaults to careflow.
+
+    careflow re-serializes its full profile via its v1 `profile_to_blob.py`; senseflow (I2C, v2 blob)
+    serves the pre-computed `blobHex` from its published catalog.
     """
     if not _PROFILE_KEY_RE.match(profile_key):
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": "bad_profile_key", "message": "Invalid profile key."}},
         )
-    profile_path = _PROFILES_DIR / f"{profile_key}.json"
-    if not profile_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": {
-                    "code": "not_found",
-                    "message": f"Unknown device profile '{profile_key}'.",
-                }
-            },
-        )
-    import json
+    p = resolve_product(request, product)
 
-    mod = _blob_module()
+    # Catalog-blobHex path (senseflow / any product without a request-time serializer).
+    if p.serializer_path is None:
+        cat_path = (p.catalog_dir or Path("/nonexistent")) / f"{profile_key}.json"
+        if not cat_path.exists():
+            raise _not_found(profile_key)
+        doc = json.loads(cat_path.read_text())
+        blob_hex = doc.get("blobHex")
+        if not blob_hex:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": "no_blob", "message": f"Catalog '{profile_key}' has no blobHex."}},
+            )
+        return {
+            "profileKey": profile_key,
+            "deviceByte": doc["deviceByte"],
+            "byteLen": len(blob_hex) // 2,
+            "blobHex": blob_hex,
+        }
+
+    # Re-serialize path (careflow): full profile JSON -> profile_to_blob.py.
+    profile_path = (p.profiles_dir or Path("/nonexistent")) / f"{profile_key}.json"
+    if not profile_path.exists():
+        raise _not_found(profile_key)
+    mod = _blob_module(str(p.serializer_path))
     doc = json.loads(profile_path.read_text())
     normalized = mod.profile_from_json(doc)
     blob: bytes = mod.build_blob(normalized)

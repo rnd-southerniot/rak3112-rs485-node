@@ -46,9 +46,11 @@ _build_lock: asyncio.Lock = asyncio.Lock()
 # ---------------------------------------------------------------------------
 
 
-def _bin_key(tag: str) -> str:
-    """S3 object key for the firmware binary."""
-    return f"builds/{tag}/rak3112_rs485_node.bin"
+def _bin_key(tag: str, binary: str = "rak3112_rs485_node.bin") -> str:
+    """S3 object key for the firmware binary. Keyed by the product's binary name so two products
+    (careflow rak3112_rs485_node.bin, senseflow senseflow_eink_node.bin) never collide; careflow's
+    key is unchanged."""
+    return f"builds/{tag}/{binary}"
 
 
 def _manifest_key(tag: str) -> str:
@@ -148,7 +150,7 @@ def _ready_build(
 ) -> Build:
     """Construct a ready Build from the local firmware binary (baked at image build time)."""
     sha256 = _compute_sha256(firmware_path)
-    url = _presigned_url(external, bucket, _bin_key(tag), expiry_hours)
+    url = _presigned_url(external, bucket, _bin_key(tag, firmware_path.name), expiry_hours)
     return Build(
         firmwareTag=tag,
         status="ready",
@@ -188,7 +190,7 @@ async def ensure_built(
       6. put_object the manifest.json {sha256, builtAt, firmwareTag}.
       7. Return ready Build with presigned binaryUrl from the EXTERNAL client.
     """
-    bin_key = _bin_key(tag)
+    bin_key = _bin_key(tag, firmware_path.name)
 
     # Fast path: already cached (no lock overhead on common case)
     if _is_cached(internal, bucket, bin_key):
@@ -267,7 +269,7 @@ async def get_cached_build(
     only. Returns None when the tag has never been built (drives 404 in the
     router). Parameters are injectable for test isolation (minio_mock fixture).
     """
-    bin_key = _bin_key(tag)
+    bin_key = _bin_key(tag, firmware_path.name)
     if not _is_cached(internal, bucket, bin_key):
         return None
 

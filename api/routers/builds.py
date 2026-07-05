@@ -14,11 +14,12 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.auth import verify_bearer
 from api.config import Settings, get_settings
 from api.models import Build, BuildRequest
+from api.products import firmware_path_for, resolve_product
 from api.services.storage import ensure_built, get_cached_build
 
 logger = logging.getLogger(__name__)
@@ -35,25 +36,22 @@ router = APIRouter(prefix="/v1", dependencies=[Depends(verify_bearer)])
 async def trigger_build(
     request: Request,
     body: Optional[BuildRequest] = None,
+    product: Optional[str] = Query(default=None),
     settings: Settings = Depends(get_settings),
 ) -> Build:
     """
-    POST /v1/build — idempotent build trigger.
+    POST /v1/build — idempotent build trigger. `?product=` defaults to careflow (v1 calls unchanged).
 
-    Accepts an optional body ``{"firmwareTag": "<tag>"}``. If omitted, or if
-    ``firmwareTag`` is null/empty, defaults to the pinned ``FIRMWARE_TAG`` from
-    settings. Only the pinned tag is accepted (D-06); any other tag returns 422
-    with ``error.code = unknown_tag``.
-
-    On first call: uploads the baked firmware binary to MinIO, computes sha256,
-    generates a 1-hour presigned binaryUrl.
-    On subsequent calls: returns the cached result without re-uploading.
+    Accepts an optional body ``{"firmwareTag": "<tag>"}``; if omitted/empty, defaults to the product's
+    pinned tag. Only the product's pinned tag is accepted (D-06); any other tag → 422
+    ``unknown_tag``. First call uploads the product's binary to MinIO (product-scoped key) + presigned
+    URL; later calls return the cached result. (`product` is a query param, not a `BuildRequest` field —
+    `BuildRequest` is frozen.)
     """
-    tag: str = (
-        (body.firmwareTag if body and body.firmwareTag else None) or settings.FIRMWARE_TAG
-    )
+    prod = resolve_product(request, product)
+    tag: str = (body.firmwareTag if body and body.firmwareTag else None) or prod.firmware_tag
 
-    if tag != settings.FIRMWARE_TAG:
+    if tag != prod.firmware_tag:
         raise HTTPException(
             status_code=422,
             detail={
@@ -61,7 +59,8 @@ async def trigger_build(
                     "code": "unknown_tag",
                     "message": (
                         f"Unknown firmware tag '{tag}'. "
-                        f"Only the pinned tag '{settings.FIRMWARE_TAG}' is supported."
+                        f"Only the pinned tag '{prod.firmware_tag}' is supported for product "
+                        f"'{prod.id}'."
                     ),
                 }
             },
@@ -73,7 +72,7 @@ async def trigger_build(
         internal=state.minio_internal,
         external=state.minio_external,
         bucket=getattr(state, "firmware_bucket", settings.MINIO_BUCKET),
-        firmware_path=state.firmware_path,
+        firmware_path=firmware_path_for(request, prod),
         expiry_hours=settings.PRESIGNED_EXPIRY_HOURS,
     )
 
@@ -87,6 +86,7 @@ async def trigger_build(
 async def get_build(
     firmware_tag: str,
     request: Request,
+    product: Optional[str] = Query(default=None),
     settings: Settings = Depends(get_settings),
 ) -> Build:
     """
@@ -122,7 +122,7 @@ async def get_build(
         )
 
     bucket = getattr(state, "firmware_bucket", settings.MINIO_BUCKET)
-    firmware_path: Path = state.firmware_path
+    firmware_path: Path = firmware_path_for(request, resolve_product(request, product))
 
     result = await get_cached_build(
         firmware_tag,
@@ -152,92 +152,71 @@ async def get_build(
 # ---------------------------------------------------------------------------
 
 
+_CMD_MODBUS = {
+    "id": "prov-modbus",
+    "description": "Set Modbus RTU connection parameters in NVS",
+    "syntax": "prov modbus <baud> <parity> <stopBits> <slaveId>",
+    "example": "prov modbus 9600 N 1 1",
+    "nvsKeys": ["modbus_baud", "modbus_parity", "modbus_stop", "modbus_slave"],
+}
+_CMD_CREDS = {
+    "id": "prov-creds",
+    "description": "Inject LoRaWAN OTAA credentials into NVS",
+    "syntax": "prov creds <devEui> <joinEui> <appKey>",
+    "args": {
+        "devEui": {"description": "16-hex DevEUI (unique per device)", "secret": False},
+        "joinEui": {"description": "16-hex JoinEUI / AppEUI", "secret": False},
+        "appKey": {"description": "32-hex AppKey (LoRaWAN OTAA root key)", "secret": True},
+    },
+    "nvsKeys": ["lorawan_deveui", "lorawan_joineui", "lorawan_appkey"],
+}
+_CMD_PROFILE = {
+    "id": "prov-profile",
+    "description": "Store the selected device-profile blob in NVS (I2C sensor map + ADR-005 payload)",
+    "syntax": "prov-profile <hexblob>",
+    "example": "prov-profile 02100176…",
+    "nvsKeys": ["prov/profile"],
+}
+
+
+def _cmd_show(bus: str) -> dict:
+    keys = (
+        ["modbus_baud", "modbus_parity", "modbus_stop", "modbus_slave", "lorawan_deveui", "lorawan_joineui"]
+        if bus == "modbus"
+        else ["lorawan_deveui", "lorawan_joineui"]
+    )
+    return {
+        "id": "prov-show",
+        "description": "Print current NVS provisioning state (appKey redacted, other values shown)",
+        "syntax": "prov show",
+        "nvsKeys": keys,
+    }
+
+
 @router.get("/provisioning-protocol")
 async def get_provisioning_protocol(
-    settings: Settings = Depends(get_settings),
+    request: Request,
+    product: Optional[str] = Query(default=None),
 ) -> dict:
     """
-    GET /v1/provisioning-protocol — advisory console command set.
-
-    Returns the NVS provisioning workflow for the pinned firmware tag. This
-    endpoint is optional and advisory — the Phase A WebSerial flasher uses it
-    to populate its provisioning UI.
-
-    ``appKey`` is flagged ``secret: true`` and is NEVER populated with a live
-    value (T-01-09: no credential disclosure; D-07: placeholder creds only).
-
-    Console baud is 115200; promptReady is the string the firmware prints when
-    it is ready to accept prov-* commands (bootVerify confirms boot state).
+    GET /v1/provisioning-protocol — advisory console command set for a product (`?product=` defaults
+    to careflow, whose payload is byte-identical to before). The WebSerial flasher renders its
+    provisioning UI from this: careflow = prov-modbus/creds/show; senseflow = prov-creds/prov-profile/
+    show (no modbus). ``appKey`` is flagged ``secret: true`` and is NEVER populated (T-01-09 / D-07).
     """
+    prod = resolve_product(request, product)
+    builders = {"modbus": _CMD_MODBUS, "creds": _CMD_CREDS, "profile": _CMD_PROFILE}
+    commands = [
+        _cmd_show(prod.bus) if cid == "show" else builders[cid] for cid in prod.prov_command_ids
+    ]
     return {
-        "firmwareTag": settings.FIRMWARE_TAG,
-        "console": {
-            "baud": 115200,
-            "promptReady": "esp> ",
-        },
-        "commands": [
-            {
-                "id": "prov-modbus",
-                "description": "Set Modbus RTU connection parameters in NVS",
-                "syntax": "prov modbus <baud> <parity> <stopBits> <slaveId>",
-                "example": "prov modbus 9600 N 1 1",
-                "nvsKeys": [
-                    "modbus_baud",
-                    "modbus_parity",
-                    "modbus_stop",
-                    "modbus_slave",
-                ],
-            },
-            {
-                "id": "prov-creds",
-                "description": "Inject LoRaWAN OTAA credentials into NVS",
-                "syntax": "prov creds <devEui> <joinEui> <appKey>",
-                "args": {
-                    "devEui": {
-                        "description": "16-hex DevEUI (unique per device)",
-                        "secret": False,
-                    },
-                    "joinEui": {
-                        "description": "16-hex JoinEUI / AppEUI",
-                        "secret": False,
-                    },
-                    "appKey": {
-                        "description": "32-hex AppKey (LoRaWAN OTAA root key)",
-                        "secret": True,
-                    },
-                },
-                "nvsKeys": [
-                    "lorawan_deveui",
-                    "lorawan_joineui",
-                    "lorawan_appkey",
-                ],
-            },
-            {
-                "id": "prov-show",
-                "description": (
-                    "Print current NVS provisioning state "
-                    "(appKey redacted, other values shown)"
-                ),
-                "syntax": "prov show",
-                "nvsKeys": [
-                    "modbus_baud",
-                    "modbus_parity",
-                    "modbus_stop",
-                    "modbus_slave",
-                    "lorawan_deveui",
-                    "lorawan_joineui",
-                ],
-            },
-        ],
+        "firmwareTag": prod.firmware_tag,
+        "console": {"baud": 115200, "promptReady": "esp> "},
+        "commands": commands,
         "bootVerify": {
-            "markers": [
-                "[creds:NVS]",
-                "PSRAM",
-                "modbus",
-            ],
+            "markers": list(prod.boot_markers),
             "description": (
-                "Confirm these strings appear in the boot log "
-                "before declaring provisioning complete."
+                "Confirm these strings appear in the boot log before declaring provisioning complete."
             ),
         },
     }

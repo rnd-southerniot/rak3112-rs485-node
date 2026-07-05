@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     FIRMWARE_PATH: str = "/app/firmware/rak3112_rs485_node.bin"
     PRESIGNED_EXPIRY_HOURS: int = 1
 
+    # --- senseflow (2nd product, P5.1 — additive; empty SENSEFLOW_ROOT disables it) --------------
+    # Model B (pre-built artifact): senseflow publishes its .bin + boot parts + device-profiles
+    # catalog + compiled_sensors.json as a tagged artifact; the service references it by unpacking
+    # the artifact under SENSEFLOW_ROOT (default /app/products/senseflow in the image). The careflow
+    # (default) product is unaffected when this is unset.
+    SENSEFLOW_ROOT: str = ""
+    SENSEFLOW_FIRMWARE_TAG: str = "senseflow-p4-green"
+
 
 @lru_cache()
 def get_settings() -> Settings:

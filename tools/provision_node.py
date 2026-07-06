@@ -15,6 +15,7 @@ Credentials:
 The AppKey is a SECRET: it is read from firmware/.env, sent only to the CRM, and never
 printed (redacted in all logs) or committed.
 """
+import argparse
 import json
 import os
 import sys
@@ -26,8 +27,23 @@ CRM_BASE = os.environ["CRM_BASE"].rstrip("/")
 CRM_EMAIL = os.environ["CRM_EMAIL"]
 CRM_PASSWORD = os.environ["CRM_PASSWORD"]
 
-PRODUCT_CODE = "RAK3112-RS485-AS923"
-PRODUCT_NAME = "RAK3112 RS-485 ⇄ LoRaWAN AS923 Node"
+# Per-product CRM identity. The onboarding workflow is identical across products; only the LoRaWAN
+# product record + device serial prefix differ. Default is careflow (unchanged from the single-product
+# tool). Mirrors tools/provision_template*.json planeA_crm.
+PRODUCTS = {
+    "careflow": {
+        "code": "RAK3112-RS485-AS923",
+        "name": "RAK3112 RS-485 ⇄ LoRaWAN AS923 Node",
+        "description": "RS-485 ⇄ LoRaWAN AS923 industrial sensor/gateway node",
+        "serial_prefix": "RAK3112-RS485-",
+    },
+    "senseflow": {
+        "code": "SENSEFLOW-EINK-AS923",
+        "name": "Senseflow e-ink / I²C ⇄ LoRaWAN AS923 Node",
+        "description": "I²C environmental sensor e-ink display node (BME280/SGP40/SHTC3) over LoRaWAN AS923",
+        "serial_prefix": "SENSEFLOW-EINK-",
+    },
+}
 HARDWARE_NAME = "ESP32-WROOM-32"  # reuse a valid catalog entry; true identity carried in serial/DevEUI
 
 
@@ -62,11 +78,19 @@ def items(resp):
 
 
 def main():
+    ap = argparse.ArgumentParser(description="Register a rak3112 node in the SCOMM CRM → ChirpStack.")
+    ap.add_argument("--product", default="careflow", choices=sorted(PRODUCTS),
+                    help="which product's CRM identity to register under (default: careflow)")
+    args = ap.parse_args()
+    P = PRODUCTS[args.product]
+    product_code, product_name = P["code"], P["name"]
+
     fw_env = _env_file(os.path.join(os.path.dirname(__file__), "..", "firmware", ".env"))
     deveui = fw_env["LORAWAN_DEVEUI"].lower()
     appkey = fw_env["LORAWAN_APPKEY"].lower()
-    serial = "RAK3112-RS485-" + deveui[-6:].upper()
-    print(f"[*] node: DevEUI={deveui}  serial={serial}  AppKey=<redacted {len(appkey)} hex>")
+    serial = P["serial_prefix"] + deveui[-6:].upper()
+    print(f"[*] product={args.product}  node: DevEUI={deveui}  serial={serial}  "
+          f"AppKey=<redacted {len(appkey)} hex>")
 
     # 1. login
     st, r = api("POST", "/auth/login", body={"email": CRM_EMAIL, "password": CRM_PASSWORD})
@@ -76,17 +100,17 @@ def main():
 
     # 2. find-or-create LoRaWAN product
     _, r = api("GET", "/products", token)
-    prod = next((p for p in items(r) if p.get("code") == PRODUCT_CODE), None)
+    prod = next((p for p in items(r) if p.get("code") == product_code), None)
     if not prod:
         st, prod = api("POST", "/products", token, {
-            "name": PRODUCT_NAME, "code": PRODUCT_CODE,
-            "description": "RS-485 ⇄ LoRaWAN AS923 industrial sensor/gateway node",
+            "name": product_name, "code": product_code,
+            "description": P["description"],
             "isLorawanProduct": True, "lorawanRegion": "AS923",
         })
         assert prod.get("id"), f"create product failed: {st} {prod}"
-        print(f"[2] product CREATED {PRODUCT_CODE} id={prod['id']}")
+        print(f"[2] product CREATED {product_code} id={prod['id']}")
     else:
-        print(f"[2] product exists {PRODUCT_CODE} id={prod['id']}")
+        print(f"[2] product exists {product_code} id={prod['id']}")
     product_id = prod["id"]
 
     # 2b. ensure an SOP template exists (prereq for task creation). The POST needs productId
@@ -164,7 +188,7 @@ def main():
     print("          printed QR on-site to trigger ChirpStack device registration.")
 
     print("\n=== SUMMARY ===")
-    print(f"  product   : {PRODUCT_CODE} ({product_id})")
+    print(f"  product   : {product_code} ({product_id})")
     print(f"  task      : {task_id}")
     print(f"  device    : {serial}  DevEUI={deveui}")
     print(f"  task status: READY_FOR_INSTALLATION")

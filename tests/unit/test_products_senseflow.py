@@ -128,8 +128,47 @@ def test_flash_manifest_senseflow(senseflow_client):
     assert r.status_code == 200
     body = r.json()
     assert body["firmwareTag"] == "senseflow-p4-green"
+    assert body["product"] == "senseflow"
     names = [p["name"] for p in body["parts"]]
     assert names == ["bootloader", "partition-table", "nvs-blank", "ota-data", "app"]
+    # Every part path carries ?product=senseflow so a flasher following the manifest can't drop it
+    # (Codex P2: else it would fetch careflow bytes for a senseflow manifest).
+    for p in body["parts"]:
+        assert p["path"] == f"/v1/flash-part/{p['name']}?product=senseflow"
+
+
+def test_flash_manifest_careflow_paths_are_product_qualified(tmp_path, monkeypatch):
+    """Careflow (default) manifest also emits product-qualified part paths — the contract is unambiguous
+    regardless of which product is selected. Self-contained: fakes careflow's baked firmware dir (bin +
+    boot parts) and points FIRMWARE_PATH at it (senseflow left unconfigured)."""
+    fwdir = tmp_path / "careflow"
+    fwdir.mkdir()
+    (fwdir / "rak3112_rs485_node.bin").write_bytes(b"\x00" * 200)
+    for boot in ("bootloader.bin", "partition-table.bin", "ota_data.bin"):
+        (fwdir / boot).write_bytes(b"\x00" * 64)
+
+    get_settings.cache_clear()
+    settings = Settings(
+        API_TOKEN=TEST_TOKEN,
+        MINIO_ACCESS_KEY="k",
+        MINIO_SECRET_KEY="s",
+        FIRMWARE_PATH=str(fwdir / "rak3112_rs485_node.bin"),
+    )
+    monkeypatch.setattr("api.config.get_settings", lambda: settings)
+
+    import api.main
+    from fastapi.testclient import TestClient
+
+    tc = TestClient(api.main.app)
+    try:
+        r = tc.get("/v1/flash-manifest", headers={"Authorization": f"Bearer {TEST_TOKEN}"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["product"] == "careflow"
+        for p in body["parts"]:
+            assert p["path"] == f"/v1/flash-part/{p['name']}?product=careflow"
+    finally:
+        get_settings.cache_clear()
 
 
 def test_unknown_product_404(senseflow_client):

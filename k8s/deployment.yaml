@@ -17,12 +17,11 @@ spec:
     spec:
       containers:
         - name: firmware-service
-          # Image tag = the pinned firmware git tag (D-06: build-once per tag).
-          # [ASSUMED] Docker Hub repo confirmed in Plan 07 user_setup.
-          image: fahim0173/rak3112-firmware-service:phase-7-provisioning-green
-          # phase-7-provisioning-green is a mutable firmware-identity tag (rebuilt in place),
-          # so Always — otherwise nodes serve a stale cached image on rollout.
-          imagePullPolicy: Always
+          # Image tag = git short-sha of the repo commit the image was built from (immutable).
+          # Keep FIRMWARE_TAG in firmware-service-env in lockstep — it keys the MinIO
+          # build cache; a stale tag serves a stale cached binary on POST /v1/build.
+          image: fahim0173/rak3112-firmware-service:b60ea9d
+          imagePullPolicy: IfNotPresent
           ports:
             - { name: http, containerPort: 8000 }
           envFrom:

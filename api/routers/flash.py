@@ -30,12 +30,13 @@ protects FIELD OTA updates, a different lifecycle stage.)
 import hashlib
 import logging
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from api.auth import verify_bearer
-from api.config import Settings, get_settings
+from api.products import firmware_path_for, resolve_product
 
 logger = logging.getLogger(__name__)
 
@@ -80,15 +81,17 @@ def _part_bytes(part: dict, firmware_path: Path) -> bytes:
 @router.get("/flash-manifest")
 async def get_flash_manifest(
     request: Request,
-    settings: Settings = Depends(get_settings),
+    product: Optional[str] = Query(default=None),
 ) -> dict:
     """
-    Return the ordered flash set for the pinned firmware: each part's name, flash
-    offset, byte size, and sha256. The flasher fetches each part via
-    GET /v1/flash-part/{name} and writes it at `offset`. The set includes
-    nvs-blank, so a factory flash is a factory reset (see module docstring).
+    Return the ordered flash set for a product's firmware: each part's name, flash offset, byte size,
+    and sha256. `?product=` defaults to careflow. The flasher fetches each part via
+    GET /v1/flash-part/{name} and writes it at `offset`. The set includes nvs-blank, so a factory
+    flash is a factory reset (see module docstring). The dual-OTA layout/offsets are shared across
+    products (senseflow's partitions.csv matches).
     """
-    firmware_path: Path = request.app.state.firmware_path
+    prod = resolve_product(request, product)
+    firmware_path: Path = firmware_path_for(request, prod)
     parts = []
     for part in FLASH_PARTS:
         data = _part_bytes(part, firmware_path)
@@ -100,17 +103,18 @@ async def get_flash_manifest(
                 "sha256": hashlib.sha256(data).hexdigest(),
             }
         )
-    return {"firmwareTag": settings.FIRMWARE_TAG, "parts": parts}
+    return {"firmwareTag": prod.firmware_tag, "parts": parts}
 
 
 @router.get("/flash-part/{name}")
 async def get_flash_part(
     name: str,
     request: Request,
+    product: Optional[str] = Query(default=None),
 ) -> Response:
     """Stream one flash part's raw bytes (application/octet-stream) with an
-    X-Binary-Sha256 header for integrity verification before writing."""
-    firmware_path: Path = request.app.state.firmware_path
+    X-Binary-Sha256 header for integrity verification before writing. `?product=` defaults to careflow."""
+    firmware_path: Path = firmware_path_for(request, resolve_product(request, product))
     part = next((p for p in FLASH_PARTS if p["name"] == name), None)
     if part is None:
         raise HTTPException(

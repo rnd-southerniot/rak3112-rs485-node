@@ -55,3 +55,4 @@ firmware/main/lora_credentials.h
 .claude/data/
 logs/
 firmware/logs/
+.venv-api/

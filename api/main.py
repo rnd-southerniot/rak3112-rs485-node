@@ -18,8 +18,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from api.config import get_settings
+from api.products import build_products
 from api.routers import builds as builds_module
 from api.routers import flash as flash_module
+from api.routers import products as products_module
 from api.routers import profiles as profiles_module
 from api.routers import sensors as sensors_module
 from api.services.profiles import load_sensors
@@ -74,6 +76,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, Any]:
     app.state.minio_external = external
     app.state.firmware_bucket = settings.MINIO_BUCKET
     app.state.firmware_path = Path(settings.FIRMWARE_PATH)
+
+    # Product registry (P5.1). careflow is always present (the default); senseflow when configured.
+    # Additive: the singular app.state.firmware_path above stays the careflow default for v1 routers.
+    app.state.products = build_products(settings)
+    logger.info("Products registered: %s", sorted(app.state.products))
     logger.info(
         "MinIO clients initialized (internal=%s, external=%s, bucket=%s)",
         settings.MINIO_INTERNAL_ENDPOINT,
@@ -195,3 +202,4 @@ app.include_router(sensors_module.router)
 app.include_router(builds_module.router)
 app.include_router(flash_module.router)
 app.include_router(profiles_module.router)
+app.include_router(products_module.router)

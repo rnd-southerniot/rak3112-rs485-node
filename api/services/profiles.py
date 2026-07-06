@@ -81,3 +81,54 @@ def load_sensors(
             )
         )
     return sensors
+
+
+# --- P5.1: bus-agnostic sensor list (v2, multi-product) --------------------------------------------
+
+
+def _flashable_bytes(reader_manifest: Path, reader_map: dict[str, int]) -> set[int]:
+    """Device bytes whose reader/sensor driver is compiled into the product's firmware."""
+    try:
+        readers: list[str] = json.loads(Path(reader_manifest).read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        readers = []
+    return {reader_map[r] for r in readers if r in reader_map}
+
+
+def load_sensors_v2(product) -> list:
+    """Load a product's device catalog into bus-agnostic SensorV2 (Modbus meters OR I2C sensors).
+
+    Reads product.catalog_dir/*.json leniently (careflow's v1 catalog and senseflow's richer catalog
+    have different shapes). flashable is computed from the product's reader/sensor manifest, never read
+    from the JSON (D-01)."""
+    from api.models_v2 import I2CParams, SensorV2
+
+    flashable = _flashable_bytes(product.reader_manifest, product.reader_map)
+    out: list[SensorV2] = []
+    for f in sorted(Path(product.catalog_dir).glob("*.json")):
+        raw: dict = json.loads(f.read_text())
+        bus = raw.get("bus", product.bus)
+        modbus = ModbusParams(**raw["modbus"]) if isinstance(raw.get("modbus"), dict) else None
+        i2c = None
+        if bus == "i2c":
+            i2c = I2CParams(
+                addr=int(raw.get("i2cAddr", raw.get("addr", 0))),
+                sensorType=str(raw.get("sensorType", "")),
+            )
+        out.append(
+            SensorV2(
+                profileKey=raw["profileKey"],
+                displayName=raw.get("displayName") or raw.get("model") or raw["profileKey"],
+                manufacturer=raw.get("manufacturer", ""),
+                model=raw.get("model", ""),
+                deviceByte=raw["deviceByte"],
+                bus=bus,
+                modbus=modbus,
+                i2c=i2c,
+                measurands=raw.get("measurands", []),
+                payloadBytes=raw["payloadBytes"],
+                flashable=(raw["deviceByte"] in flashable),
+                isActive=raw.get("isActive", True),
+            )
+        )
+    return out

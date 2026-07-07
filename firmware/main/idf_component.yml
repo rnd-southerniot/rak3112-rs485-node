@@ -1,5 +1,9 @@
-## ESP-IDF component manager dependencies (Phase 5, ADR-003).
+## ESP-IDF component manager dependencies.
+## The LoRaWAN radio path (RadioLib SX1262 + OTA) lives in the shared siot-lorawan-node component
+## (P7); jgromes/radiolib is pulled in transitively through it.
 dependencies:
   idf: ">=5.5.0"
-  jgromes/radiolib: "==7.7.1"
+  siot-lorawan-node:
+    git: https://github.com/rnd-southerniot/siot-lorawan-node.git
+    version: "v0.1.0"
   espressif/led_strip: "~2.5.5" # WS2812 driver (bench LED heartbeat, Phase 7 power bring-up)

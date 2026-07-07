@@ -7,6 +7,8 @@ Industrial RS-485 ⇄ LoRaWAN AS923 sensor/gateway node.
 - **Build path:** ESP-IDF v5.5.4 via `idf.py` (single canonical path; PlatformIO dropped at Phase 1 Attempt 2 — see CLAUDE.md §1 footnote ²)
 - **Owner:** rnd-southerniot
 
+**Topology (P7):** the LoRaWAN radio stack is the shared component [`siot-lorawan-node`](https://github.com/rnd-southerniot/siot-lorawan-node) (git dep in `firmware/main/idf_component.yml`); the CRM build/flash/provision service lives in the hub [`siot-node-firmware-automation`](https://github.com/rnd-southerniot/siot-node-firmware-automation) (this repo's `api/`+`tools/` are the deployed source until the hub cutover). Sibling product: `senseflow-eink-node`.
+
 ## Quick start
 
 ```bash

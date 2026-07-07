@@ -6,6 +6,17 @@
 > **Repo path:** `~/Developer/projects/firmware/rak3112-rs485-node/`
 > **Mode:** **split-repo** — this is the *firmware* repo only. Hardware lives separately (see §0.1).
 
+> **⚠ Three-layer topology (P7, 2026-07-08).** This firmware repo now consumes the shared LoRaWAN
+> component and the CRM automation has a canonical home:
+> - **`rnd-southerniot/siot-lorawan-node`** (private, `v0.1.0`) — the RadioLib SX1262 LoRaWAN stack +
+>   OTA, pulled in via `firmware/main/idf_component.yml` (git dep). `lora.cpp/.h`, `EspHalS3.h`,
+>   `ota.c/.h` are NO LONGER in this repo — edit them there and bump the version.
+> - **`rnd-southerniot/siot-node-firmware-automation`** — the central CRM hub (multi-product `api/` +
+>   `tools/` + `device-profiles/`). This repo's copies are the **deployed** source until the hub
+>   cutover (coordinated with Fahim); after cutover, `api/`+`tools/` here become legacy pointers.
+> - **Device profiles stay v1 here** (senseflow uses v2); the v1→v2 unification is a deferred migration.
+> Skills: `provision-node`, `install-chirpstack-decoder` (this repo's `.claude/skills/`).
+
 ---
 
 ## 0. Identity

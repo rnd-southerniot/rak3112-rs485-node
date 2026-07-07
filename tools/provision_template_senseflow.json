@@ -1,0 +1,55 @@
+{
+  "$schema": "https://southerniot.net/schemas/rak3112-provision-template.v1.json",
+  "_comment": [
+    "Declarative source-of-values template for provisioning a senseflow-eink-node (I2C sensor node).",
+    "Sibling of provision_template.json (careflow / Modbus). Same identity + CRM-registration shape;",
+    "planeB writes a device-PROFILE blob (prov-profile) instead of Modbus field config (prov-modbus).",
+    "Secrets are ${ENV:KEY} references resolved at run time from firmware/.env — never inlined here."
+  ],
+  "templateVersion": 1,
+  "product": "senseflow",
+
+  "valueSources": {
+    "deveui":   { "value": "${ENV:LORAWAN_DEVEUI}",  "source": "env-firmware", "format": "hex16", "secret": false, "transform": "lowercase" },
+    "joineui":  { "value": "${ENV:LORAWAN_JOINEUI}", "source": "env-firmware", "format": "hex16", "secret": false, "transform": "lowercase", "default": "0000000000000000" },
+    "appkey":   { "value": "${ENV:LORAWAN_APPKEY}",  "source": "env-firmware", "format": "hex32", "secret": true,  "transform": "lowercase", "redactInLogs": true },
+    "serial":   { "value": "SENSEFLOW-EINK-${deveui[-6:]|upper}", "source": "derived" }
+  },
+
+  "planeA_crm": {
+    "_role": "Network/identity — registers the device into ChirpStack AS923 via the SCOMM CRM workflow (shared workflow; only the product identity differs from careflow).",
+    "driver": "tools/provision_node.py --product senseflow",
+    "product": {
+      "findOrCreateBy": "code",
+      "code": "SENSEFLOW-EINK-AS923",
+      "name": "Senseflow e-ink / I²C ⇄ LoRaWAN AS923 Node",
+      "description": "I²C environmental sensor e-ink display node (BME280/SGP40/SHTC3) over LoRaWAN AS923",
+      "isLorawanProduct": true,
+      "lorawanRegion": "AS923",
+      "source": "constant"
+    },
+    "serialPrefix": "SENSEFLOW-EINK-",
+    "hardware": {
+      "catalogLookupBy": "name",
+      "name": "ESP32-WROOM-32",
+      "_note": "Reuses a valid catalog entry; true identity carried in serial/DevEUI.",
+      "source": "constant"
+    }
+  },
+
+  "planeB_nvs": {
+    "_role": "Device/runtime — writes the same creds + the selected I²C device-profile blob into node NVS namespace 'prov' (additive; LoRaWAN nonces preserved).",
+    "driver": "tools/provision_nvs.py --product senseflow",
+    "transport": "USB-Serial-JTAG console (prov>)",
+    "lorawan": {
+      "command": "prov-lorawan <deveui16> <joineui16> <appkey32>",
+      "deveui": "${deveui}", "joineui": "${joineui}", "appkey": "${appkey}"
+    },
+    "profile": {
+      "command": "prov-profile <hexblob>",
+      "_note": "The blob is the ADR-006 v2 device-profile (I2C addr + sensor_type + ADR-005 payload map). Source it from the firmware-service GET /v1/profile-blob/<key>?product=senseflow, or the senseflow device-profiles catalog blobHex. Provide the resolved hex via SENSEFLOW_PROFILE_BLOB.",
+      "blob": { "value": "${ENV:SENSEFLOW_PROFILE_BLOB}", "source": "env-firmware", "format": "hex" }
+    },
+    "commit": "prov-done  (commit + restart into field mode)"
+  }
+}

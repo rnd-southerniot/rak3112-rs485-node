@@ -8,7 +8,12 @@
  *   Phase 1: Transport + ESPLoader.main() → read EUI-48 MAC → writeFlash
  *             (eraseAll:false, never true — T-02-01) → hard_reset → disconnect
  *   Phase 2: port.open(@115200) → wait for "esp> " → send prov cmds
- *             → reboot → read boot log for [creds:NVS] / PSRAM / modbus
+ *             → reboot → read boot log for the product's markers
+ *
+ * PRODUCT-AWARE (P5.2): a product selector drives ?product= on every firmware-service fetch
+ * (provisioning-protocol / builds / profile-blob / v2 sensors). The NVS command sequence and the
+ * boot-verify markers are read FROM the protocol, not hardcoded — so careflow (prov-modbus) and
+ * senseflow (prov-profile, blob from /v1/profile-blob) both work off the same code path.
  *
  * Threat model (02-01-PLAN.md):
  *   T-02-01: eraseAll:false enforced below — search "NEVER" comments.
@@ -49,6 +54,27 @@ let g_binary_sha256 = null;
 let g_esploader = null;
 /** Transport instance — retained for disconnect after flash. */
 let g_transport = null;
+/** Selected product id ("careflow" | "senseflow") — drives the ?product= query on every fetch. */
+let g_product = 'careflow';
+/** Full provisioning-protocol object for the selected product (commands + bootVerify.markers). */
+let g_protocol = null;
+/** Boot-verify markers for the selected product — from protocol.bootVerify.markers, not hardcoded. */
+let g_markers = ['[creds:NVS]'];
+
+/** Reset per-product state when the operator switches products. */
+window.onProductChange = function() {
+  g_product = document.getElementById('product').value;
+  g_protocol = null;
+  document.getElementById('fw-tag').value = '';
+  document.getElementById('protocol-display').textContent = '';
+  document.getElementById('markers-expected').textContent = '(fetch protocol)';
+  // Field visibility is finalized by fetchProtocol (driven by the protocol's command set); give an
+  // immediate hint here so the form isn't misleading before the fetch.
+  const isModbus = g_product === 'careflow';
+  document.getElementById('modbus-fields').style.display = isModbus ? '' : 'none';
+  document.getElementById('profile-fields').style.display = isModbus ? 'none' : '';
+  logInfo(`Product set to "${g_product}". Fetch Protocol to load its provisioning contract.`);
+};
 
 // ---------------------------------------------------------------------------
 // Logging helpers
@@ -76,20 +102,37 @@ window.clearLog = () => { document.getElementById('log').textContent = ''; };
 window.fetchProtocol = async function() {
   const base  = document.getElementById('fw-service-url').value.trim().replace(/\/$/, '');
   const token = document.getElementById('api-token').value.trim();
-  logInfo(`Fetching ${base}/v1/provisioning-protocol ...`);
+  g_product = document.getElementById('product').value;
+  const q = `?product=${encodeURIComponent(g_product)}`;
+  logInfo(`Fetching ${base}/v1/provisioning-protocol${q} ...`);
   try {
-    const r = await fetch(`${base}/v1/provisioning-protocol`, {
+    const r = await fetch(`${base}/v1/provisioning-protocol${q}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const proto = await r.json();
+    g_protocol = proto;
     const tag = proto.firmwareTag;
     if (document.getElementById('fw-tag').value === '' && tag) {
       document.getElementById('fw-tag').value = tag;
     }
+
+    // Drive the UI from the protocol, not from hardcoded careflow assumptions.
+    const cmdIds = (proto.commands || []).map(c => c.id);
+    g_markers = proto.bootVerify?.markers || ['[creds:NVS]'];
+    document.getElementById('markers-expected').textContent = g_markers.join(' ');
     document.getElementById('protocol-display').textContent =
-      `firmwareTag: ${proto.firmwareTag}  baud: ${proto.console?.baud}  prompt: "${proto.console?.promptReady}"`;
-    logOK(`Protocol fetched — tag=${tag}`);
+      `product: ${proto.product || g_product}  tag: ${tag}  cmds: [${cmdIds.join(', ')}]  ` +
+      `baud: ${proto.console?.baud}  markers: [${g_markers.join(' ')}]`;
+
+    // Show the field block the protocol calls for: prov-modbus → Modbus fields; prov-profile → profile.
+    const hasModbus  = cmdIds.includes('prov-modbus');
+    const hasProfile = cmdIds.includes('prov-profile');
+    document.getElementById('modbus-fields').style.display  = hasModbus  ? '' : 'none';
+    document.getElementById('profile-fields').style.display = hasProfile ? '' : 'none';
+    if (hasProfile) await loadProfiles(base, token);
+
+    logOK(`Protocol fetched — product=${g_product} tag=${tag} cmds=[${cmdIds.join(', ')}]`);
 
     // Also fetch build info to get binaryUrl + sha256 (T-02-03).
     await fetchBuildUrl(base, token, tag);
@@ -98,10 +141,54 @@ window.fetchProtocol = async function() {
   }
 };
 
-async function fetchBuildUrl(base, token, tag) {
-  logInfo(`GET ${base}/v1/builds/${tag} ...`);
+/** Populate the profile-key dropdown from /v2/sensors (senseflow I²C sensors), flashable ones first. */
+async function loadProfiles(base, token) {
+  const sel = document.getElementById('profile-key');
+  sel.innerHTML = '';
   try {
-    const r = await fetch(`${base}/v1/builds/${tag}`, {
+    const r = await fetch(`${base}/v2/sensors?product=${encodeURIComponent(g_product)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const sensors = await r.json();
+    for (const s of sensors) {
+      const opt = document.createElement('option');
+      opt.value = s.profileKey;
+      opt.textContent = `${s.displayName} (${s.profileKey})${s.flashable ? '' : ' — not flashable'}`;
+      opt.disabled = !s.flashable;
+      sel.appendChild(opt);
+    }
+    logOK(`Loaded ${sensors.length} profile(s) for ${g_product}`);
+    if (sel.value) await onProfileKeyChange();
+  } catch (e) {
+    logWarn('loadProfiles failed: ' + e.message);
+  }
+}
+
+/** Fetch the selected profile's NVS blob (the exact bytes `prov-profile` writes) into the form. */
+window.onProfileKeyChange = async function() {
+  const base  = document.getElementById('fw-service-url').value.trim().replace(/\/$/, '');
+  const token = document.getElementById('api-token').value.trim();
+  const key   = document.getElementById('profile-key').value;
+  if (!key) return;
+  try {
+    const r = await fetch(`${base}/v1/profile-blob/${encodeURIComponent(key)}?product=${encodeURIComponent(g_product)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const body = await r.json();
+    document.getElementById('profile-blob').value = body.blobHex || '';
+    logOK(`Profile "${key}" blob loaded (deviceByte=${body.deviceByte}, ${(body.blobHex||'').length/2} bytes)`);
+  } catch (e) {
+    logWarn('onProfileKeyChange failed: ' + e.message);
+  }
+};
+
+async function fetchBuildUrl(base, token, tag) {
+  const q = `?product=${encodeURIComponent(g_product)}`;
+  logInfo(`GET ${base}/v1/builds/${tag}${q} ...`);
+  try {
+    const r = await fetch(`${base}/v1/builds/${tag}${q}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -239,7 +326,8 @@ window.confirmAndFlash = async function() {
 
   const base  = document.getElementById('fw-service-url').value.trim().replace(/\/$/, '');
   const token = document.getElementById('api-token').value.trim();
-  const tag   = document.getElementById('fw-tag').value.trim() || 'phase-7-provisioning-green';
+  const tag   = document.getElementById('fw-tag').value.trim() || g_protocol?.firmwareTag || '';
+  if (!tag) { logErr('No firmware tag — Fetch Protocol first (per selected product).'); return; }
 
   // Fetch binaryUrl if not already available.
   if (!g_binary_url) {
@@ -274,7 +362,13 @@ window.confirmAndFlash = async function() {
       logWarn('SHA-256 not available — skipping integrity check');
     }
 
-    // Flash — A1 RESOLVED: app binary offset = 0x10000 (from flasher_args.json).
+    // Flash — app-only at 0x10000 (this spike's original single-app assumption).
+    // NOTE (P5.2): the current firmware is dual-OTA; a correct factory install writes the full set from
+    // GET /v1/flash-manifest?product=<p> — each part at its `offset`, fetched via its product-qualified
+    // `path` (bootloader/partition-table/nvs-blank/ota-data/app). The production flasher (plan 02-08)
+    // MUST use the manifest set; this spike keeps app-only-at-0x10000 as it was hardware-validated that
+    // way and the multi-part path is unverified here. Product-awareness above (protocol/creds/profile)
+    // is the P5.2 change actually exercised.
     logInfo('Writing flash at 0x10000 (eraseAll:false — T-02-01: NEVER erase)...');
     const flashOptions = {
       fileArray: [{ data: firmwareBin, address: 0x10000 }],
@@ -323,12 +417,20 @@ window.runPhase2 = async function() {
   const mbPar   = document.getElementById('mb-parity').value.trim() || 'N';
   const mbStop  = document.getElementById('mb-stop').value.trim()   || '1';
   const mbSlave = document.getElementById('mb-slave').value.trim()  || '1';
+  const profBlob = document.getElementById('profile-blob').value.trim();
 
+  if (!g_protocol) {
+    logErr('Fetch Protocol first (drives the prov command set per product).'); return;
+  }
   if (!appKey || appKey.length !== 32) {
     logErr('appKey must be 32 hex chars'); return;
   }
   if (!devEui || devEui.length !== 16) {
     logErr('devEui must be 16 hex chars (run Phase 1 first)'); return;
+  }
+  const cmdIds = (g_protocol.commands || []).map(c => c.id);
+  if (cmdIds.includes('prov-profile') && !profBlob) {
+    logErr('This product needs a profile blob — select a device profile first.'); return;
   }
 
   document.getElementById('btn-nvs').disabled = true;
@@ -438,20 +540,33 @@ window.runPhase2 = async function() {
     await waitForLine('esp> ', 15000);
     logOK('Console ready (esp> )');
 
-    // Provision Modbus config.
-    await sendCmd(`prov modbus ${mbBaud} ${mbPar} ${mbStop} ${mbSlave}`);
-    await waitForLine('esp> ', 5000);
-
-    // Provision credentials.
-    // T-02-02: do NOT log the appKey — logSafe=false suppresses the log line.
-    const credsCmd = `prov creds ${devEui} ${joinEui} ${appKey}`;
-    logInfo(`> prov creds ${devEui} ${joinEui} <appKey:redacted>`);
-    await sendCmd(credsCmd, /* logSafe */ false);
-    await waitForLine('esp> ', 5000);
-
-    // Verify (prov show — appKey will be redacted by firmware).
-    await sendCmd('prov show');
-    await waitForLine('esp> ', 5000);
+    // Provisioning sequence is DRIVEN BY THE PROTOCOL, in the order the product declares its commands
+    // (careflow: prov-modbus, prov-creds, prov-show; senseflow: prov-creds, prov-profile, prov-show).
+    // T-02-02: the appKey is only ever sent inside the prov-creds line with logSafe=false — never logged.
+    for (const cmd of (g_protocol.commands || [])) {
+      switch (cmd.id) {
+        case 'prov-modbus':
+          await sendCmd(`prov modbus ${mbBaud} ${mbPar} ${mbStop} ${mbSlave}`);
+          await waitForLine('esp> ', 5000);
+          break;
+        case 'prov-profile':
+          // Writes the exact NVS blob the firmware verified (from /v1/profile-blob).
+          await sendCmd(`prov-profile ${profBlob}`);
+          await waitForLine('esp> ', 5000);
+          break;
+        case 'prov-creds':
+          logInfo(`> prov creds ${devEui} ${joinEui} <appKey:redacted>`);
+          await sendCmd(`prov creds ${devEui} ${joinEui} ${appKey}`, /* logSafe */ false);
+          await waitForLine('esp> ', 5000);
+          break;
+        case 'prov-show':
+          await sendCmd('prov show'); // appKey redacted by firmware
+          await waitForLine('esp> ', 5000);
+          break;
+        default:
+          logWarn(`Unknown protocol command "${cmd.id}" — skipped (no flasher mapping).`);
+      }
+    }
 
     // [A4-PROBE] Reboot for boot-verify.
     // ASSUMPTION A4: "restart" or "esp_restart" is available as a console command.
@@ -465,11 +580,11 @@ window.runPhase2 = async function() {
       await sendCmd('esp_restart');
     }
 
-    // Boot-verify: read log for required markers.
-    logInfo('Reading boot log for markers: [creds:NVS] PSRAM modbus (up to 20s) ...');
-    const bootLog = await waitForLine('[creds:NVS]', 20000);
+    // Boot-verify: read log for the product's markers (from protocol.bootVerify.markers).
+    const markers = g_markers.length ? g_markers : ['[creds:NVS]'];
+    logInfo(`Reading boot log for markers: ${markers.join(' ')} (up to 20s) ...`);
+    const bootLog = await waitForLine(markers[0], 20000);
 
-    const markers = ['[creds:NVS]', 'PSRAM', 'modbus'];
     const results = markers.map(m => ({ marker: m, found: bootLog.includes(m) }));
     const allOK   = results.every(r => r.found);
 

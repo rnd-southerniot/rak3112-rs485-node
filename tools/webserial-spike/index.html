@@ -76,8 +76,13 @@
   <input id="fw-service-url" type="text" value="http://localhost:3006" placeholder="http://10.10.8.171:30060">
   <label>API Bearer Token</label>
   <input id="api-token" type="password" placeholder="firmware service API token">
-  <label>Firmware Tag (auto-filled from /provisioning-protocol if left blank)</label>
-  <input id="fw-tag" type="text" value="phase-7-provisioning-green" placeholder="phase-7-provisioning-green">
+  <label>Product</label>
+  <select id="product" onchange="onProductChange()">
+    <option value="careflow">careflow — RS-485 / Modbus (RAK3112)</option>
+    <option value="senseflow">senseflow — e-ink / I²C (RAK3312)</option>
+  </select>
+  <label>Firmware Tag (leave blank — auto-filled from /provisioning-protocol per product)</label>
+  <input id="fw-tag" type="text" value="" placeholder="auto from provisioning-protocol">
   <button onclick="fetchProtocol()">Fetch Protocol</button>
   <div id="protocol-display" style="margin-top:8px;color:#aaa;font-size:12px;"></div>
   <hr style="border-color:#444;margin:12px 0;">
@@ -121,20 +126,30 @@
     A4 UNRESOLVED [needs hardware]: reboot command vs RTS pulse<br>
     A5 UNRESOLVED [needs hardware]: port re-enumeration on macOS/Chrome
   </div>
-  <label>Modbus baud</label>
-  <input id="mb-baud" type="text" value="9600">
-  <label>Modbus parity (N/E/O)</label>
-  <input id="mb-parity" type="text" value="N">
-  <label>Modbus stop bits</label>
-  <input id="mb-stop" type="text" value="1">
-  <label>Modbus slave ID</label>
-  <input id="mb-slave" type="text" value="1">
+  <!-- careflow (Modbus) fields — hidden when the product's protocol has no prov-modbus command. -->
+  <div id="modbus-fields">
+    <label>Modbus baud</label>
+    <input id="mb-baud" type="text" value="9600">
+    <label>Modbus parity (N/E/O)</label>
+    <input id="mb-parity" type="text" value="N">
+    <label>Modbus stop bits</label>
+    <input id="mb-stop" type="text" value="1">
+    <label>Modbus slave ID</label>
+    <input id="mb-slave" type="text" value="1">
+  </div>
+  <!-- senseflow (I²C) fields — shown when the product's protocol has a prov-profile command. -->
+  <div id="profile-fields" style="display:none;">
+    <label>Device profile (loaded from /v2/sensors?product=…)</label>
+    <select id="profile-key" onchange="onProfileKeyChange()"></select>
+    <label>Profile blob (hex — auto-fetched from /v1/profile-blob/&lt;key&gt;)</label>
+    <input id="profile-blob" type="text" placeholder="02100176…" readonly>
+  </div>
   <label>DevEUI (16 hex chars — auto-computed from MAC when Phase 1 completes)</label>
   <input id="dev-eui" type="text" placeholder="3CDC75FFFE6F85DC">
   <label>AppKey (32 hex chars — <span class="redacted">never logged to console [T-02-02]</span>)</label>
   <input id="app-key" type="password" placeholder="32 hex chars">
   <button id="btn-nvs" onclick="runPhase2()" disabled>Run NVS Console</button>
-  <label>Boot log markers expected: [creds:NVS] PSRAM modbus</label>
+  <label>Boot log markers expected: <span id="markers-expected">(fetch protocol)</span></label>
   <div id="boot-verify-result" style="margin-top:8px;font-weight:bold;"></div>
 </div>
 

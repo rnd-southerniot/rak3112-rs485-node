@@ -22,6 +22,22 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_TEMPLATE = os.path.join(_HERE, "provision_template.json")
 DEFAULT_FW_ENV = os.path.join(_HERE, "..", "firmware", ".env")
 
+# Per-product provisioning templates (careflow = Modbus/planeB modbus; senseflow = I2C/planeB profile).
+# The CRM-registration workflow (planeA) is shared; only the product identity + planeB device config
+# differ. Default is careflow, so existing single-product callers are unchanged.
+TEMPLATES = {
+    "careflow": DEFAULT_TEMPLATE,
+    "senseflow": os.path.join(_HERE, "provision_template_senseflow.json"),
+}
+
+
+def template_for_product(product="careflow"):
+    """Absolute path to a product's provisioning template. Raises KeyError on an unknown product."""
+    try:
+        return TEMPLATES[product]
+    except KeyError:
+        raise KeyError(f"unknown product '{product}' — known: {sorted(TEMPLATES)}")
+
 
 def load_template(path=DEFAULT_TEMPLATE):
     with open(path) as f:
@@ -109,8 +125,12 @@ def resolve_identity(template, env):
         spec = vs[key]
         raw = resolve_field(spec, env)
         out[key] = _transform(raw or "", spec.get("transform", ""))
-    # derived serial — formula documented in valueSources.serial.value
-    out["serial"] = "RAK3112-RS485-" + out["deveui"][-6:].upper()
+    # derived serial: "<prefix>${deveui[-6:]|upper}". The slice/transform token isn't handled by the
+    # generic interpolator, so take the literal prefix (everything before "${") from the template and
+    # append the last-6 DevEUI nibbles. Prefix is per-product (careflow RAK3112-RS485-, senseflow
+    # SENSEFLOW-EINK-), so read it from the template rather than hardcoding.
+    prefix = vs["serial"]["value"].split("${", 1)[0]
+    out["serial"] = prefix + out["deveui"][-6:].upper()
     return out
 
 

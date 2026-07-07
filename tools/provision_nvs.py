@@ -39,14 +39,16 @@ def device_code(s):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Provision a rak3112-rs485-node over its console.")
+    ap = argparse.ArgumentParser(description="Provision a rak3112 node (careflow/senseflow) over its console.")
     ap.add_argument("-p", "--port", required=True, help="serial port (e.g. /dev/cu.usbmodem1301)")
+    ap.add_argument("--product", default="careflow", choices=sorted(pt.TEMPLATES),
+                    help="which product's provisioning template (default: careflow)")
     ap.add_argument("--env", default=pt.DEFAULT_FW_ENV,
                     help="path to firmware/.env (default: ../firmware/.env)")
     ap.add_argument("--baud", type=int, default=115200)
     args = ap.parse_args()
 
-    tmpl = pt.load_template()
+    tmpl = pt.load_template(pt.template_for_product(args.product))
     env = pt.build_env(args.env)
     B = tmpl["planeB_nvs"]
 
@@ -54,17 +56,27 @@ def main():
     pt.validate_identity(idv)
     deveui, joineui, appkey = idv["deveui"], idv["joineui"], idv["appkey"]
 
-    mb = B["modbus"]
-    dev = device_code(pt.resolve_field(mb["dev"], env))
-    baud = int(pt.resolve_field(mb["baud"], env))
-    par = parity_code(pt.resolve_field(mb["par"], env))
-    unit = int(pt.resolve_field(mb["unit"], env))
-    intv = int(pt.resolve_field(mb["intv"], env))
-
-    # command names come from the template (e.g. "prov-lorawan <...>") — take the verb only
     cmd_lorawan = B["lorawan"]["command"].split()[0]
-    cmd_modbus = B["modbus"]["command"].split()[0]
     cmd_commit = B["commit"].split()[0]
+
+    # planeB device config is product-shaped: careflow writes Modbus fields (prov-modbus); senseflow
+    # writes a device-profile blob (prov-profile). Exactly one block is present per template.
+    is_profile = "profile" in B
+    if is_profile:
+        prof = B["profile"]
+        cmd_profile = prof["command"].split()[0]
+        blob = pt.resolve_field(prof["blob"], env).strip().lower()
+        if not blob:
+            sys.exit("ERROR: senseflow provisioning needs a profile blob — set SENSEFLOW_PROFILE_BLOB "
+                     "in firmware/.env (hex from GET /v1/profile-blob/<key>?product=senseflow).")
+    else:
+        mb = B["modbus"]
+        cmd_modbus = mb["command"].split()[0]
+        dev = device_code(pt.resolve_field(mb["dev"], env))
+        baud = int(pt.resolve_field(mb["baud"], env))
+        par = parity_code(pt.resolve_field(mb["par"], env))
+        unit = int(pt.resolve_field(mb["unit"], env))
+        intv = int(pt.resolve_field(mb["intv"], env))
 
     ser = serial.Serial(args.port, args.baud, timeout=0.4)
 
@@ -90,13 +102,20 @@ def main():
     if "OK" not in cmd(f"{cmd_lorawan} {deveui} {joineui} {appkey}", secret=True):
         sys.exit(f"ERROR: {cmd_lorawan} did not return OK — is the node in provisioning mode "
                  "(unprovisioned / placeholder firmware)?")
-    if "OK" not in cmd(f"{cmd_modbus} {dev} {baud} {par} {unit} {intv}"):
-        sys.exit(f"ERROR: {cmd_modbus} did not return OK")
+    if is_profile:
+        if "OK" not in cmd(f"{cmd_profile} {blob}"):
+            sys.exit(f"ERROR: {cmd_profile} did not return OK")
+    else:
+        if "OK" not in cmd(f"{cmd_modbus} {dev} {baud} {par} {unit} {intv}"):
+            sys.exit(f"ERROR: {cmd_modbus} did not return OK")
     cmd("prov-show")
     cmd(cmd_commit)
     ser.close()
-    print(f"\nprovisioned DevEUI={deveui} (dev={dev} baud={baud} par={par} unit={unit} intv={intv}s)"
-          " — node restarting into field mode.")
+    if is_profile:
+        summary = f"profile={blob[:8]}…{blob[-4:]} ({len(blob) // 2} bytes)"
+    else:
+        summary = f"dev={dev} baud={baud} par={par} unit={unit} intv={intv}s"
+    print(f"\nprovisioned DevEUI={deveui} ({summary}) — node restarting into field mode.")
 
 
 if __name__ == "__main__":

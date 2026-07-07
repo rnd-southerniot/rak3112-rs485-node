@@ -85,10 +85,11 @@ async def get_flash_manifest(
 ) -> dict:
     """
     Return the ordered flash set for a product's firmware: each part's name, flash offset, byte size,
-    and sha256. `?product=` defaults to careflow. The flasher fetches each part via
-    GET /v1/flash-part/{name} and writes it at `offset`. The set includes nvs-blank, so a factory
-    flash is a factory reset (see module docstring). The dual-OTA layout/offsets are shared across
-    products (senseflow's partitions.csv matches).
+    sha256, and a product-qualified `path`. `?product=` defaults to careflow. The flasher fetches each
+    part via the part's `path` (which already carries `?product=`) and writes it at `offset` — following
+    `path` verbatim guarantees the bytes match this manifest's product. The set includes nvs-blank, so a
+    factory flash is a factory reset (see module docstring). The dual-OTA layout/offsets are shared
+    across products (senseflow's partitions.csv matches).
     """
     prod = resolve_product(request, product)
     firmware_path: Path = firmware_path_for(request, prod)
@@ -101,9 +102,14 @@ async def get_flash_manifest(
                 "offset": part["offset"],
                 "size": len(data),
                 "sha256": hashlib.sha256(data).hexdigest(),
+                # Product-qualified download path: a flasher that follows `path` verbatim always carries
+                # the product, so it can never fetch careflow bytes for a senseflow manifest (the part
+                # endpoint defaults a missing ?product= to careflow). Present for every product,
+                # including careflow, so the contract is unambiguous regardless of the selected product.
+                "path": f"/v1/flash-part/{part['name']}?product={prod.id}",
             }
         )
-    return {"firmwareTag": prod.firmware_tag, "parts": parts}
+    return {"product": prod.id, "firmwareTag": prod.firmware_tag, "parts": parts}
 
 
 @router.get("/flash-part/{name}")

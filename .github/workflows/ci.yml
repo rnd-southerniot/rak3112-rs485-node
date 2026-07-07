@@ -23,6 +23,17 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      # Fetch the private shared LoRaWAN component into firmware/components/ so it's a LOCAL component
+      # (takes precedence over the git: managed dependency in main/idf_component.yml) — avoids needing
+      # git auth inside the esp-idf-ci-action container. Requires the COMPONENT_REPO_TOKEN secret
+      # (fine-grained PAT, read-only Contents on rnd-southerniot/siot-lorawan-node).
+      - name: Fetch private shared component (siot-lorawan-node)
+        uses: actions/checkout@v4
+        with:
+          repository: rnd-southerniot/siot-lorawan-node
+          ref: v0.1.0
+          token: ${{ secrets.COMPONENT_REPO_TOKEN }}
+          path: firmware/components/siot-lorawan-node
       - name: Build with ESP-IDF v5.5.4 (pristine)
         uses: espressif/esp-idf-ci-action@v1
         with:

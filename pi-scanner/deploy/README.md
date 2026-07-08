@@ -49,12 +49,18 @@ Raspberry Pi OS's default **squeekboard** plus two bits of session config:
 - **Hide the desktop panel** so the window fills the screen — in `~/.config/wf-panel-pi.ini` under
   `[panel]` add `autohide=true` (and `autohide_duration=300`).
 
+- **Chromium must speak Wayland text-input** — `kiosk.sh` launches it with `--enable-wayland-ime
+  --wayland-text-input-version=3`. Without it squeekboard has no input context: it shows but can't
+  type into the field and dismisses itself on the first keypress.
+
 Reload after editing: `labwc --reconfigure` and restart `wf-panel-pi`.
 
-The keyboard is driven two ways: squeekboard auto-shows when a text field is focused (Wayland
-input-method), and the header ⌨ button toggles it via `POST /api/kiosk/keyboard` → the backend calls
-`busctl --user ... sm.puri.OSK0 SetVisible` (hence the session-bus env in `careflow-scanner.service`).
-squeekboard is enabled by default on Pi OS — no action needed; just don't disable it.
+The keyboard is driven by squeekboard's own input-method: it auto-shows when a text field is focused
+and hides when it's blurred — the app does NOT drive show/hide from focus events (tapping the
+keyboard's surface briefly blurs the field, so a focusout-hide would dismiss it mid-type). The header
+⌨ button is a manual override via `POST /api/kiosk/keyboard` → `busctl --user ... sm.puri.OSK0
+SetVisible` (hence the session-bus env in `careflow-scanner.service`). squeekboard is enabled by
+default on Pi OS — no action needed; just don't disable it.
 
 ## Notes
 

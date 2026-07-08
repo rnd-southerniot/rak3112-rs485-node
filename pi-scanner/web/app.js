@@ -180,19 +180,12 @@ try {
     el.addEventListener("click", (e) => { if (!viaPointer) fn(e); });
   };
 
-  // The backend reports the keyboard's real visibility as {shown}, so we stay in sync instead of
-  // trusting a local flag that drifts (e.g. Chromium auto-focusing a field on load).
-  let oskShown = false;
-  const syncOsk = (r) => { if (r && typeof r.shown === "boolean") oskShown = r.shown; };
-  const osk = (show) => { if (show === oskShown) return; oskShown = show; api("/kiosk/keyboard", { show }).then(syncOsk); };
-  document.addEventListener("focusin", (e) => { if (e.target.matches("input,select,textarea")) osk(true); });
-  document.addEventListener("focusout", () => setTimeout(() => {
-    if (!document.querySelector("input:focus,select:focus,textarea:focus")) osk(false);
-  }, 200));
-
-  // ⌨ manual toggle — the backend flips the keyboard based on its real visibility, so this works
-  // regardless of the local flag; we adopt the real state it reports back.
-  onTap($("#kbToggle"), () => api("/kiosk/keyboard", { toggle: true }).then(syncOsk));
+  // squeekboard (the Pi's input-method OSK) shows itself when a text field is focused and hides when
+  // it's blurred, driven by the Wayland text-input protocol that Chromium speaks with
+  // --enable-wayland-ime (see kiosk.sh). We must NOT drive show/hide from focus events here: tapping
+  // the keyboard's own surface briefly blurs the field, so a focusout-triggered hide would dismiss it
+  // mid-type. The only control we keep is the ⌨ button — a manual override that toggles it (backend).
+  onTap($("#kbToggle"), () => api("/kiosk/keyboard", { toggle: true }));
 
   // ⏻ Exit — two-tap confirm (no modal): first tap arms + relabels, second tap within 3s exits.
   // NOTE: api() sends GET unless a body is passed; /api/kiosk/exit is POST-only, so pass {} → POST.

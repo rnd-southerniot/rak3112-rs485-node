@@ -33,6 +33,10 @@ PREF="$HOME/.config/chromium/Default/Preferences"
 rm -f "$HOME/.config/chromium/SingletonLock" "$HOME/.config/chromium/SingletonSocket" \
       "$HOME/.config/chromium/SingletonCookie" 2>/dev/null
 
+#   --enable-wayland-ime: makes Chromium speak the Wayland text-input protocol so squeekboard (the
+#   on-screen keyboard) knows when a field is focused, stays up, and types into it. Without it the
+#   keyboard shows but can't type and dismisses itself on the first key.
 exec chromium-browser --app="$URL" --class=careflow-kiosk --ozone-platform=wayland \
+  --enable-wayland-ime --wayland-text-input-version=3 \
   --no-first-run --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
   --disable-features=TranslateUI --check-for-update-interval=31536000

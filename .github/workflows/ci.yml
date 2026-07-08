@@ -92,3 +92,16 @@ jobs:
         run: python -m pip install --quiet -r requirements.txt -r requirements-dev.txt
       - name: Run CRM firmware-service test suite
         run: python -m pytest tests/unit tests/integration -q
+
+  pi-scanner-tests:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install scanner-station deps
+        run: python -m pip install --quiet -r pi-scanner/requirements.txt jsonschema
+      - name: Run scanner-station test suite (mock-node; no hardware)
+        working-directory: pi-scanner
+        run: python -m pytest -q

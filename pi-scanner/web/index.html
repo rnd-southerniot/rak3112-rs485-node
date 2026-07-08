@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <title>Careflow RS-485 Scanner</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">Careflow · RS-485 Scanner</div>
+      <div id="stateBanner" class="state state-idle">idle</div>
+    </header>
+
+    <main>
+      <section id="panel" class="panel"><!-- per-state content is rendered here --></section>
+
+      <aside class="logpane">
+        <div class="logpane-head">Log</div>
+        <pre id="log"></pre>
+      </aside>
+    </main>
+
+    <template id="tpl-idle">
+      <h2>Connect a device</h2>
+      <p class="muted">Wire the unknown RS-485 device to the Careflow node's CN1, connect the node to
+        this station over USB, then start the scan.</p>
+      <label>Node port
+        <select id="port"></select>
+      </label>
+      <button id="btnStart" class="primary">Start scan</button>
+    </template>
+
+    <template id="tpl-busy">
+      <h2 id="busyTitle">Working…</h2>
+      <div class="spinner"></div>
+      <p class="muted" id="busyHint">Watch the log for progress.</p>
+    </template>
+
+    <template id="tpl-prepare">
+      <h2>Confirm the profile</h2>
+      <p class="muted">The scanner proposes structure (register, type, word order). <strong>You</strong>
+        supply meaning — name each measurand you want to keep. Unnamed rows are dropped.</p>
+
+      <form id="meta" class="meta">
+        <label>Manufacturer<input name="manufacturer" /></label>
+        <label>Model<input name="model" /></label>
+        <label>Category
+          <select name="category">
+            <option value="energy-meter">energy-meter</option>
+            <option value="generator-controller">generator-controller</option>
+            <option value="wind-sensor">wind-sensor</option>
+            <option value="other" selected>other</option>
+          </select>
+        </label>
+        <label>Device label<input name="label" placeholder="text on the device" /></label>
+        <label>Notes<input name="notes" /></label>
+      </form>
+
+      <div class="meter">
+        <div class="meter-bar"><div id="meterFill" class="meter-fill"></div></div>
+        <div id="meterText" class="meter-text">payload 3 / 53 B</div>
+      </div>
+
+      <div class="tablewrap">
+        <table id="cand">
+          <thead>
+            <tr><th>use</th><th>fc</th><th>reg</th><th>type</th><th>word</th><th>sample</th>
+              <th>conf</th><th>key*</th><th>name</th><th>unit</th><th>scale</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="actions">
+        <button id="btnConfirm" class="primary">Confirm &amp; onboard</button>
+        <button id="btnReset" class="ghost">Cancel</button>
+      </div>
+    </template>
+
+    <template id="tpl-done">
+      <h2 id="doneTitle">Done</h2>
+      <div id="doneSummary" class="summary"></div>
+      <div class="actions">
+        <button id="btnEdit" class="ghost">Edit inputs</button>
+        <button id="btnRetry" class="ghost">Re-run</button>
+        <button id="btnReset2" class="primary">New device</button>
+      </div>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

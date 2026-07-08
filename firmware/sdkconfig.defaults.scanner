@@ -1,0 +1,5 @@
+# Scanner-station firmware variant (P0): layers on top of sdkconfig.defaults.
+# Build with: idf.py -C firmware -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.scanner" build
+# Enables the read-only RS-485 scan-* discovery console the Pi scanner drives. The provisioning
+# console (default y) is required and stays on. No other behaviour changes vs the default image.
+CONFIG_APP_SCAN_CONSOLE=y

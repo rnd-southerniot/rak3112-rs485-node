@@ -22,6 +22,9 @@
 #include "profile_store.h"
 #include "provisioning.h"
 #include "status_led.h"
+#if CONFIG_APP_SCAN_CONSOLE
+#include "scan_console.h"
+#endif
 #if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT || !CONFIG_APP_FIELD_SIMULATE
 #include "modbus_master.h"
 #include "rs485.h"
@@ -663,6 +666,12 @@ void app_main(void)
     /* 7d: with no OTAA credentials (empty NVS 'prov' + placeholder compiled key), don't bogus-join
      * — idle until the provisioning console writes creds (prov-done restarts into field mode). */
     if (!lora_is_provisioned()) {
+#if CONFIG_APP_SCAN_CONSOLE
+        /* Unprovisioned → UART1 is free and no field app owns the RS-485 bus. Safe seam to expose
+         * the read-only scan-* commands so the Pi scanner can probe an unknown device. A
+         * provisioned/field node never reaches here, so scan-* is absent from the field path. */
+        scan_console_register_commands();
+#endif
         for (uint32_t i = 0;; ++i) {
             if (i % 6 == 0) {
                 ESP_LOGW(TAG, "AWAITING PROVISIONING — no LoRaWAN credentials. Run "

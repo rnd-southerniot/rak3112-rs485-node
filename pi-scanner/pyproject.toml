@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+# Run the station's tests from pi-scanner/ with `pytest` — no PYTHONPATH juggling.
+pythonpath = ["."]
+testpaths = ["tests"]

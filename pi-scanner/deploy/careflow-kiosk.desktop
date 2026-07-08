@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Careflow Scanner Kiosk
+Comment=Open the scanner wizard fullscreen on login
+Exec=/home/pi/scanner/kiosk.sh
+X-GNOME-Autostart-enabled=true

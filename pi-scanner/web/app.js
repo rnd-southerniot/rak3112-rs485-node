@@ -80,8 +80,8 @@ function renderPrepare(panel) {
   cand.measurands.forEach((m, i) => tb.appendChild(row(m, i)));
   tb.oninput = pushEdits;
 
-  $("#btnConfirm").onclick = () => api("/session/confirm");
-  $("#btnReset").onclick = () => api("/session/reset");
+  $("#btnConfirm").onclick = () => api("/session/confirm", {}); // {} -> POST (api() GETs when bodyless)
+  $("#btnReset").onclick = () => api("/session/reset", {});
   updateMeter(session.payload);
 }
 
@@ -151,9 +151,53 @@ function renderDone(panel) {
     s.innerHTML = `<p class="muted">${session.error || "See the log for details."}</p>`;
   }
   $("#btnEdit").onclick = () => { session.state = "preparing_profile"; render(); };
-  $("#btnRetry").onclick = () => api("/session/retry");
-  $("#btnReset2").onclick = () => api("/session/reset");
+  $("#btnRetry").onclick = () => api("/session/retry", {});
+  $("#btnReset2").onclick = () => api("/session/reset", {});
 }
 
+// Draw the UI FIRST so nothing below can keep the app from rendering.
 connect();
 api("/session").then((s) => { session = s; render(true); });
+
+// --- kiosk touch controls (no physical keyboard) ---------------------------------------------
+// Show the on-screen keyboard when a text field is focused, hide it otherwise; a manual ⌨ toggle;
+// and a ⏻ Exit with an in-page (non-modal) confirm — Chromium suppresses window.confirm() in the
+// kiosk (it returns false), so the old confirm()-gated Exit never fired. Buttons are bound via
+// pointerup+click so a real finger tap always registers, not just a synthesized click. Wrapped so a
+// kiosk-only failure can never blank the wizard. (The keyboard itself is squeekboard, driven by the
+// backend over D-Bus; this side just posts show/hide/toggle to /api/kiosk/keyboard.)
+try {
+  // Fire fn once per tap. pointerup is reliable for touch (no 300ms delay, no click-synthesis
+  // dependency); we swallow the click the browser then synthesizes so the handler runs exactly once.
+  const onTap = (el, fn) => {
+    if (!el) return;
+    let viaPointer = false;
+    el.addEventListener("pointerup", (e) => {
+      if (e.button > 0) return; // primary/touch only
+      viaPointer = true; setTimeout(() => (viaPointer = false), 700);
+      fn(e);
+    });
+    el.addEventListener("click", (e) => { if (!viaPointer) fn(e); });
+  };
+
+  // squeekboard (the Pi's input-method OSK) shows itself when a text field is focused and hides when
+  // it's blurred, driven by the Wayland text-input protocol that Chromium speaks with
+  // --enable-wayland-ime (see kiosk.sh). We must NOT drive show/hide from focus events here: tapping
+  // the keyboard's own surface briefly blurs the field, so a focusout-triggered hide would dismiss it
+  // mid-type. The only control we keep is the ⌨ button — a manual override that toggles it (backend).
+  onTap($("#kbToggle"), () => api("/kiosk/keyboard", { toggle: true }));
+
+  // ⏻ Exit — two-tap confirm (no modal): first tap arms + relabels, second tap within 3s exits.
+  // NOTE: api() sends GET unless a body is passed; /api/kiosk/exit is POST-only, so pass {} → POST.
+  const ex = $("#kioskExit");
+  if (ex) {
+    const exLabel = ex.textContent;
+    let armed = null;
+    const disarm = () => { armed = null; ex.textContent = exLabel; ex.classList.remove("armed"); };
+    onTap(ex, () => {
+      if (armed) { clearTimeout(armed); disarm(); api("/kiosk/exit", {}); return; }
+      ex.textContent = "⏻ Tap again"; ex.classList.add("armed");
+      armed = setTimeout(disarm, 3000);
+    });
+  }
+} catch (e) { console.error("kiosk controls init failed", e); }

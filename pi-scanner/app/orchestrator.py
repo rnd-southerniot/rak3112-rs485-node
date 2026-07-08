@@ -136,7 +136,10 @@ class Orchestrator:
         )
         if self.candidate is not None:
             apply_edits(self.candidate, self.operator)
-            self._emit_candidate()
+            # NOTE: do NOT emit a "candidate" event here. This runs on every keystroke (debounced), and
+            # the UI rebuilds the whole preparing_profile panel on a candidate event — which destroys
+            # the input the operator is typing in, dropping focus and dismissing the on-screen keyboard.
+            # The operator's edits are already in the DOM; the caller gets the fresh payload below.
         return {"candidate": self.candidate_dict(), "payload": self.payload_status()}
 
     def payload_status(self) -> dict:

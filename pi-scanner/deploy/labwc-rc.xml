@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<!--
+  Reference ~/.config/labwc/rc.xml for the Careflow scanner kiosk (Raspberry Pi OS bookworm / labwc).
+  Copy to ~/.config/labwc/rc.xml and adapt the DEVICE-SPECIFIC <touch> line (deviceName + mapToOutput)
+  to your panel. The kiosk-relevant parts are the exit keybinds and the windowRule.
+-->
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <libinput>
+    <device category="default">
+      <pointerSpeed>0.000000</pointerSpeed>
+      <leftHanded>no</leftHanded>
+    </device>
+  </libinput>
+  <mouse>
+    <doubleClickTime>400</doubleClickTime>
+  </mouse>
+  <keyboard>
+    <repeatRate>25</repeatRate>
+    <repeatDelay>600</repeatDelay>
+    <!-- Exit the kiosk with a keyboard (the UI's on-screen "⏻ Exit" is the touch path). -->
+    <keybind key="A-F4"><action name="Close"/></keybind>
+    <keybind key="C-A-q"><action name="Close"/></keybind>
+  </keyboard>
+  <!-- DEVICE-SPECIFIC: your touchscreen's libinput name + the output it's mapped to. -->
+  <touch deviceName="QDtech MPI1001" mapToOutput="HDMI-A-1" mouseEmulation="yes"/>
+  <!-- Careflow kiosk: the scanner UI runs as a borderless Chromium --app window (see kiosk.sh).
+       Maximize it (NOT fullscreen, so the squeekboard on-screen keyboard's layer-shell surface shows
+       above it and reflows the page via its exclusive zone) and drop server-side decoration. -->
+  <windowRules>
+    <windowRule identifier="*" serverDecoration="no" skipTaskbar="yes" skipWindowSwitcher="yes">
+      <action name="Maximize"/>
+    </windowRule>
+  </windowRules>
+</openbox_config>

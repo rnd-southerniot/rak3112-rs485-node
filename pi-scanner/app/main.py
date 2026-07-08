@@ -34,6 +34,14 @@ async def lifespan(_app: "FastAPI"):
 app = FastAPI(title="Careflow RS-485 Scanner Station", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def _no_cache(request, call_next):
+    # The kiosk is updated in place (rsync); never let Chromium serve a stale UI from disk cache.
+    resp = await call_next(request)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/api/ports")
 def list_ports() -> dict:
     ports = ["mock"]
@@ -84,6 +92,58 @@ async def retry() -> dict:
 @app.post("/api/session/reset")
 async def reset() -> dict:
     orch.reset()
+    return {"ok": True}
+
+
+_OSK_DEST = "sm.puri.OSK0"  # squeekboard's D-Bus name / object / interface
+_OSK_PATH = "/sm/puri/OSK0"
+
+
+@app.post("/api/kiosk/keyboard")
+async def kiosk_keyboard(body: dict) -> dict:
+    """Show/hide the on-screen keyboard for touch-only kiosks.
+
+    Drives Raspberry Pi's squeekboard via D-Bus (sm.puri.OSK0.SetVisible). squeekboard types into
+    the focused Chromium field through the Wayland input-method protocol and also auto-shows on focus;
+    this endpoint lets the ⌨ button force it. (wvkbd was dropped: its virtual-keyboard key injection
+    didn't land in the field, and its wlr-layer surface is hidden behind the kiosk window anyway.)
+
+    ``{"toggle": true}`` flips visibility; ``{"show": bool}`` forces a state. No-op if squeekboard
+    isn't running. NOTE: the systemd unit must expose the user session bus to reach it —
+    ``DBUS_SESSION_BUS_ADDRESS`` / ``XDG_RUNTIME_DIR`` are set in careflow-scanner.service.
+    """
+    import subprocess
+
+    body = body or {}
+
+    def _visible() -> bool:
+        r = subprocess.run(
+            ["busctl", "--user", "get-property", _OSK_DEST, _OSK_PATH, _OSK_DEST, "Visible"],
+            capture_output=True, text=True,
+        )
+        return "true" in r.stdout
+
+    try:
+        show = (not _visible()) if body.get("toggle") else bool(body.get("show", True))
+        subprocess.run(
+            ["busctl", "--user", "call", _OSK_DEST, _OSK_PATH, _OSK_DEST,
+             "SetVisible", "b", "true" if show else "false"],
+            capture_output=True,
+        )
+        return {"ok": True, "shown": show}
+    except Exception:
+        return {"ok": True, "shown": False}
+
+
+@app.post("/api/kiosk/exit")
+async def kiosk_exit() -> dict:
+    """Close the kiosk browser -> back to the desktop (touch-friendly exit; no keyboard needed)."""
+    import subprocess
+
+    try:
+        subprocess.Popen(["pkill", "-f", "chromium"])
+    except Exception:
+        pass
     return {"ok": True}
 
 

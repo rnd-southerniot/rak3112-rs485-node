@@ -95,26 +95,44 @@ async def reset() -> dict:
     return {"ok": True}
 
 
+_OSK_DEST = "sm.puri.OSK0"  # squeekboard's D-Bus name / object / interface
+_OSK_PATH = "/sm/puri/OSK0"
+
+
 @app.post("/api/kiosk/keyboard")
 async def kiosk_keyboard(body: dict) -> dict:
     """Show/hide the on-screen keyboard for touch-only kiosks.
 
-    Uses wvkbd (a wlr-layer-shell OSK that force-shows and types into the focused Chromium field) —
-    squeekboard auto-hides when no text-input is active, so it can't be reliably driven from here.
-    Launch = show, kill = hide. No-op if wvkbd isn't installed.
+    Drives Raspberry Pi's squeekboard via D-Bus (sm.puri.OSK0.SetVisible). squeekboard types into
+    the focused Chromium field through the Wayland input-method protocol and also auto-shows on focus;
+    this endpoint lets the ⌨ button force it. (wvkbd was dropped: its virtual-keyboard key injection
+    didn't land in the field, and its wlr-layer surface is hidden behind the kiosk window anyway.)
+
+    ``{"toggle": true}`` flips visibility; ``{"show": bool}`` forces a state. No-op if squeekboard
+    isn't running. NOTE: the systemd unit must expose the user session bus to reach it —
+    ``DBUS_SESSION_BUS_ADDRESS`` / ``XDG_RUNTIME_DIR`` are set in careflow-scanner.service.
     """
     import subprocess
 
-    show = bool((body or {}).get("show", True))
+    body = body or {}
+
+    def _visible() -> bool:
+        r = subprocess.run(
+            ["busctl", "--user", "get-property", _OSK_DEST, _OSK_PATH, _OSK_DEST, "Visible"],
+            capture_output=True, text=True,
+        )
+        return "true" in r.stdout
+
     try:
-        running = subprocess.run(["pgrep", "-x", "wvkbd-mobintl"], capture_output=True).returncode == 0
-        if show and not running:
-            subprocess.Popen(["wvkbd-mobintl", "-L", "300"])
-        elif not show and running:
-            subprocess.run(["pkill", "-x", "wvkbd-mobintl"])
+        show = (not _visible()) if body.get("toggle") else bool(body.get("show", True))
+        subprocess.run(
+            ["busctl", "--user", "call", _OSK_DEST, _OSK_PATH, _OSK_DEST,
+             "SetVisible", "b", "true" if show else "false"],
+            capture_output=True,
+        )
+        return {"ok": True, "shown": show}
     except Exception:
-        pass
-    return {"ok": True}
+        return {"ok": True, "shown": False}
 
 
 @app.post("/api/kiosk/exit")

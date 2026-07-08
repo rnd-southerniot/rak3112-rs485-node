@@ -160,17 +160,54 @@ connect();
 api("/session").then((s) => { session = s; render(true); });
 
 // --- kiosk touch controls (no physical keyboard) ---------------------------------------------
-// Show the on-screen keyboard when a text field is focused, hide it otherwise; plus a manual toggle
-// + an Exit button. All no-ops off a squeekboard kiosk. Wrapped so a kiosk-only failure can never
-// blank the wizard.
+// Show the on-screen keyboard when a text field is focused, hide it otherwise; a manual ⌨ toggle;
+// and a ⏻ Exit with an in-page (non-modal) confirm — Chromium suppresses window.confirm() in the
+// kiosk (it returns false), so the old confirm()-gated Exit never fired. Buttons are bound via
+// pointerup+click so a real finger tap always registers, not just a synthesized click. Wrapped so a
+// kiosk-only failure can never blank the wizard. (The keyboard itself is squeekboard, driven by the
+// backend over D-Bus; this side just posts show/hide/toggle to /api/kiosk/keyboard.)
 try {
+  const klog = (m) => appendLog("[kiosk] " + m); // TEMP: prove taps reach the handlers (remove later)
+
+  // Fire fn once per tap. pointerup is reliable for touch (no 300ms delay, no click-synthesis
+  // dependency); we swallow the click the browser then synthesizes so the handler runs exactly once.
+  const onTap = (el, fn) => {
+    if (!el) return;
+    let viaPointer = false;
+    el.addEventListener("pointerup", (e) => {
+      if (e.button > 0) return; // primary/touch only
+      viaPointer = true; setTimeout(() => (viaPointer = false), 700);
+      fn(e);
+    });
+    el.addEventListener("click", (e) => { if (!viaPointer) fn(e); });
+  };
+
+  // The backend reports the keyboard's real visibility as {shown}, so we stay in sync instead of
+  // trusting a local flag that drifts (e.g. Chromium auto-focusing a field on load).
   let oskShown = false;
-  const osk = (show) => { if (show === oskShown) return; oskShown = show; api("/kiosk/keyboard", { show }); };
+  const syncOsk = (r) => { if (r && typeof r.shown === "boolean") oskShown = r.shown; };
+  const osk = (show) => { if (show === oskShown) return; oskShown = show; api("/kiosk/keyboard", { show }).then(syncOsk); };
   document.addEventListener("focusin", (e) => { if (e.target.matches("input,select,textarea")) osk(true); });
   document.addEventListener("focusout", () => setTimeout(() => {
     if (!document.querySelector("input:focus,select:focus,textarea:focus")) osk(false);
   }, 200));
-  const kb = $("#kbToggle"), ex = $("#kioskExit");
-  if (kb) kb.onclick = () => osk(!oskShown);
-  if (ex) ex.onclick = () => { if (confirm("Exit the scanner kiosk to the desktop?")) api("/kiosk/exit"); };
+
+  // ⌨ manual toggle — the backend flips the keyboard based on its real visibility, so this works
+  // regardless of the local flag; we adopt the real state it reports back.
+  onTap($("#kbToggle"), () => api("/kiosk/keyboard", { toggle: true }).then((r) => { syncOsk(r); klog("keyboard " + (oskShown ? "show" : "hide")); }));
+
+  // ⏻ Exit — two-tap confirm (no modal): first tap arms + relabels, second tap within 3s exits.
+  // NOTE: api() sends GET unless a body is passed; /api/kiosk/exit is POST-only, so pass {} → POST.
+  const ex = $("#kioskExit");
+  if (ex) {
+    const exLabel = ex.textContent;
+    let armed = null;
+    const disarm = () => { armed = null; ex.textContent = exLabel; ex.classList.remove("armed"); };
+    onTap(ex, () => {
+      if (armed) { clearTimeout(armed); klog("exit confirmed"); disarm(); api("/kiosk/exit", {}); return; }
+      klog("exit armed — tap again to confirm");
+      ex.textContent = "⏻ Tap again"; ex.classList.add("armed");
+      armed = setTimeout(disarm, 3000);
+    });
+  }
 } catch (e) { console.error("kiosk controls init failed", e); }

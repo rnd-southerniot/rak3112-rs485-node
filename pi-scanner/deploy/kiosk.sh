@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Careflow scanner kiosk launcher (Raspberry Pi OS / labwc / Wayland).
-# Waits for the local FastAPI service to actually serve the page, then opens Chromium fullscreen.
+# Waits for the local FastAPI service to actually serve the page, then opens Chromium.
+#
+# Borderless --app window, NOT --kiosk: exclusive fullscreen stacks above the wlr-layer-shell layers,
+# which hides the on-screen keyboard (squeekboard) behind the window. A borderless --app window that
+# labwc *maximizes* stays below those layers, so the keyboard shows above it. The maximize + no-decor
+# rule lives in ~/.config/labwc/rc.xml (and the panel is auto-hidden via ~/.config/wf-panel-pi.ini) —
+# see this dir's README.
+#
 # EXIT the kiosk: the on-screen "⏻ Exit" button in the UI, or over SSH:
 #   sudo systemctl stop careflow-scanner && pkill -f '[c]hromium'
 # Install to /home/pi/scanner/kiosk.sh and launch it from ~/.config/autostart/careflow-kiosk.desktop.
@@ -20,6 +27,6 @@ PREF="$HOME/.config/chromium/Default/Preferences"
   's/"exited_cleanly":false/"exited_cleanly":true/; s/"exit_type":"[^"]*"/"exit_type":"Normal"/g' \
   "$PREF" 2>/dev/null
 
-exec chromium-browser --kiosk --ozone-platform=wayland \
+exec chromium-browser --app="$URL" --class=careflow-kiosk --ozone-platform=wayland \
   --no-first-run --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
-  --disable-features=TranslateUI --check-for-update-interval=31536000 "$URL"
+  --disable-features=TranslateUI --check-for-update-interval=31536000

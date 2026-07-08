@@ -30,8 +30,10 @@ header {
 .kbtn {
   margin: 0; padding: 10px 16px; min-height: 44px; border-radius: 8px; font-size: 16px;
   background: var(--panel); border: 1px solid var(--line); color: var(--fg); cursor: pointer;
+  touch-action: manipulation; /* no double-tap-zoom delay/gesture capture stealing the tap */
 }
 #kioskExit { border-color: var(--err); color: var(--err); }
+#kioskExit.armed { background: var(--err); color: #fff; } /* two-tap Exit: armed, tap again to confirm */
 
 main { display: flex; flex: 1; min-height: 0; }
 .panel { flex: 1; padding: 24px 28px; overflow: auto; }

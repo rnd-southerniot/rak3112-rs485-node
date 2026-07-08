@@ -1,0 +1,182 @@
+{
+  "profile_id": "honeywell-eem400-scanned",
+  "schema_version": 1,
+  "device": {
+    "manufacturer": "Honeywell",
+    "model": "EEM400-D-MO",
+    "category": "energy-meter",
+    "type_byte": 5
+  },
+  "bus": {
+    "baud": 9600,
+    "parity": "N",
+    "data_bits": 8,
+    "stop_bits": 1
+  },
+  "defaults": {
+    "function_code": 3,
+    "word_order": "ABCD"
+  },
+  "scan": {
+    "function_code": 3,
+    "register": 0,
+    "quantity": 1,
+    "match": "any-reply",
+    "note": "scanner-discovered linkcheck register."
+  },
+  "measurands": [
+    {
+      "key": "energy_t1",
+      "name": "Total energy tariff 1",
+      "unit": "kWh",
+      "function_code": 3,
+      "register": 27,
+      "type": "u32",
+      "scale": 0.01,
+      "word_order": "ABCD",
+      "accumulating": true
+    },
+    {
+      "key": "v_l1",
+      "name": "Phase-1 voltage",
+      "unit": "V",
+      "function_code": 3,
+      "register": 35,
+      "type": "u16",
+      "scale": 1.0
+    },
+    {
+      "key": "i_l1",
+      "name": "Phase-1 current",
+      "unit": "A",
+      "function_code": 3,
+      "register": 36,
+      "type": "u16",
+      "scale": 0.1
+    },
+    {
+      "key": "v_l2",
+      "name": "Phase-2 voltage",
+      "unit": "V",
+      "function_code": 3,
+      "register": 40,
+      "type": "u16",
+      "scale": 1.0
+    },
+    {
+      "key": "i_l2",
+      "name": "Phase-2 current",
+      "unit": "A",
+      "function_code": 3,
+      "register": 41,
+      "type": "u16",
+      "scale": 0.1
+    },
+    {
+      "key": "v_l3",
+      "name": "Phase-3 voltage",
+      "unit": "V",
+      "function_code": 3,
+      "register": 45,
+      "type": "u16",
+      "scale": 1.0
+    },
+    {
+      "key": "i_l3",
+      "name": "Phase-3 current",
+      "unit": "A",
+      "function_code": 3,
+      "register": 46,
+      "type": "u16",
+      "scale": 0.1
+    },
+    {
+      "key": "p_total",
+      "name": "Total active power",
+      "unit": "kW",
+      "function_code": 3,
+      "register": 50,
+      "type": "u16",
+      "scale": 0.01
+    },
+    {
+      "key": "q_total",
+      "name": "Total reactive power",
+      "unit": "kvar",
+      "function_code": 3,
+      "register": 51,
+      "type": "u16",
+      "scale": 0.01
+    }
+  ],
+  "payload": {
+    "device_byte": 5,
+    "total_len": 23,
+    "fields": [
+      {
+        "key": "energy_t1",
+        "offset": 0,
+        "encoding": "u32",
+        "scale": 100
+      },
+      {
+        "key": "v_l1",
+        "offset": 4,
+        "encoding": "u16",
+        "scale": 1
+      },
+      {
+        "key": "i_l1",
+        "offset": 6,
+        "encoding": "u16",
+        "scale": 10
+      },
+      {
+        "key": "v_l2",
+        "offset": 8,
+        "encoding": "u16",
+        "scale": 1
+      },
+      {
+        "key": "i_l2",
+        "offset": 10,
+        "encoding": "u16",
+        "scale": 10
+      },
+      {
+        "key": "v_l3",
+        "offset": 12,
+        "encoding": "u16",
+        "scale": 1
+      },
+      {
+        "key": "i_l3",
+        "offset": 14,
+        "encoding": "u16",
+        "scale": 10
+      },
+      {
+        "key": "p_total",
+        "offset": 16,
+        "encoding": "u16",
+        "scale": 100
+      },
+      {
+        "key": "q_total",
+        "offset": 18,
+        "encoding": "u16",
+        "scale": 100
+      }
+    ]
+  },
+  "provisioning": {
+    "slave_id_source": "scan",
+    "note": "Discovered by the node bus-scan at commissioning."
+  },
+  "source": {
+    "repo": "pi-scanner",
+    "commit": "scanner-generated",
+    "datasheet": "EEM400-D-MO (scanner-discovered)"
+  },
+  "conflicts": []
+}

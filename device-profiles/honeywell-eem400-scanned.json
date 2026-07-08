@@ -1,0 +1,17 @@
+{
+  "_generated_by": "device-profiles/profiles_to_catalog.py \u2014 do not hand-edit",
+  "profileKey": "honeywell-eem400-scanned",
+  "displayName": "Honeywell EEM400-D-MO",
+  "manufacturer": "Honeywell",
+  "model": "EEM400-D-MO",
+  "deviceByte": 5,
+  "modbus": {
+    "baud": 9600,
+    "parity": "N",
+    "stopBits": 1,
+    "functionCode": 3,
+    "wordOrder": "ABCD"
+  },
+  "payloadBytes": 23,
+  "isActive": true
+}

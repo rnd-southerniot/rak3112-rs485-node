@@ -80,8 +80,8 @@ function renderPrepare(panel) {
   cand.measurands.forEach((m, i) => tb.appendChild(row(m, i)));
   tb.oninput = pushEdits;
 
-  $("#btnConfirm").onclick = () => api("/session/confirm");
-  $("#btnReset").onclick = () => api("/session/reset");
+  $("#btnConfirm").onclick = () => api("/session/confirm", {}); // {} -> POST (api() GETs when bodyless)
+  $("#btnReset").onclick = () => api("/session/reset", {});
   updateMeter(session.payload);
 }
 
@@ -151,8 +151,8 @@ function renderDone(panel) {
     s.innerHTML = `<p class="muted">${session.error || "See the log for details."}</p>`;
   }
   $("#btnEdit").onclick = () => { session.state = "preparing_profile"; render(); };
-  $("#btnRetry").onclick = () => api("/session/retry");
-  $("#btnReset2").onclick = () => api("/session/reset");
+  $("#btnRetry").onclick = () => api("/session/retry", {});
+  $("#btnReset2").onclick = () => api("/session/reset", {});
 }
 
 // Draw the UI FIRST so nothing below can keep the app from rendering.
@@ -167,8 +167,6 @@ api("/session").then((s) => { session = s; render(true); });
 // kiosk-only failure can never blank the wizard. (The keyboard itself is squeekboard, driven by the
 // backend over D-Bus; this side just posts show/hide/toggle to /api/kiosk/keyboard.)
 try {
-  const klog = (m) => appendLog("[kiosk] " + m); // TEMP: prove taps reach the handlers (remove later)
-
   // Fire fn once per tap. pointerup is reliable for touch (no 300ms delay, no click-synthesis
   // dependency); we swallow the click the browser then synthesizes so the handler runs exactly once.
   const onTap = (el, fn) => {
@@ -194,7 +192,7 @@ try {
 
   // ⌨ manual toggle — the backend flips the keyboard based on its real visibility, so this works
   // regardless of the local flag; we adopt the real state it reports back.
-  onTap($("#kbToggle"), () => api("/kiosk/keyboard", { toggle: true }).then((r) => { syncOsk(r); klog("keyboard " + (oskShown ? "show" : "hide")); }));
+  onTap($("#kbToggle"), () => api("/kiosk/keyboard", { toggle: true }).then(syncOsk));
 
   // ⏻ Exit — two-tap confirm (no modal): first tap arms + relabels, second tap within 3s exits.
   // NOTE: api() sends GET unless a body is passed; /api/kiosk/exit is POST-only, so pass {} → POST.
@@ -204,8 +202,7 @@ try {
     let armed = null;
     const disarm = () => { armed = null; ex.textContent = exLabel; ex.classList.remove("armed"); };
     onTap(ex, () => {
-      if (armed) { clearTimeout(armed); klog("exit confirmed"); disarm(); api("/kiosk/exit", {}); return; }
-      klog("exit armed — tap again to confirm");
+      if (armed) { clearTimeout(armed); disarm(); api("/kiosk/exit", {}); return; }
       ex.textContent = "⏻ Tap again"; ex.classList.add("armed");
       armed = setTimeout(disarm, 3000);
     });

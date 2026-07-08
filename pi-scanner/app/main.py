@@ -87,6 +87,35 @@ async def reset() -> dict:
     return {"ok": True}
 
 
+@app.post("/api/kiosk/keyboard")
+async def kiosk_keyboard(body: dict) -> dict:
+    """Show/hide the on-screen keyboard (squeekboard, via its DBus interface). No-op off-Pi."""
+    import subprocess
+
+    show = "true" if bool((body or {}).get("show", True)) else "false"
+    try:
+        subprocess.run(
+            ["busctl", "--user", "set-property", "sm.puri.OSK0", "/sm/puri/OSK0",
+             "sm.puri.OSK0", "Visible", "b", show],
+            timeout=3, capture_output=True,
+        )
+    except Exception:
+        pass  # not on a squeekboard kiosk — harmless
+    return {"ok": True}
+
+
+@app.post("/api/kiosk/exit")
+async def kiosk_exit() -> dict:
+    """Close the kiosk browser -> back to the desktop (touch-friendly exit; no keyboard needed)."""
+    import subprocess
+
+    try:
+        subprocess.Popen(["pkill", "-f", "chromium"])
+    except Exception:
+        pass
+    return {"ok": True}
+
+
 @app.websocket("/ws")
 async def ws(sock: WebSocket) -> None:
     await sock.accept()

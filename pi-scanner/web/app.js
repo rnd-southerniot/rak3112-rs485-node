@@ -155,5 +155,17 @@ function renderDone(panel) {
   $("#btnReset2").onclick = () => api("/session/reset");
 }
 
+// --- kiosk touch controls (no physical keyboard) ---------------------------------------------
+// Show the on-screen keyboard when a text field is focused, hide it otherwise; plus manual toggle
+// + an Exit button. All no-ops off a squeekboard kiosk.
+let oskShown = false;
+function osk(show) { if (show === oskShown) return; oskShown = show; api("/kiosk/keyboard", { show }); }
+document.addEventListener("focusin", (e) => { if (e.target.matches("input,select,textarea")) osk(true); });
+document.addEventListener("focusout", () => setTimeout(() => {
+  if (!document.querySelector("input:focus,select:focus,textarea:focus")) osk(false);
+}, 200));
+$("#kbToggle").onclick = () => osk(!oskShown);
+$("#kioskExit").onclick = () => { if (confirm("Exit the scanner kiosk to the desktop?")) api("/kiosk/exit"); };
+
 connect();
 api("/session").then((s) => { session = s; render(true); });

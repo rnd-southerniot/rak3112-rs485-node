@@ -26,6 +26,13 @@ header {
 .state-success { color: var(--ok); border-color: var(--ok); }
 .state-failed { color: var(--err); border-color: var(--err); }
 
+.kiosk-tools { display: flex; gap: 10px; margin-left: auto; padding-left: 16px; }
+.kbtn {
+  margin: 0; padding: 10px 16px; min-height: 44px; border-radius: 8px; font-size: 16px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--fg); cursor: pointer;
+}
+#kioskExit { border-color: var(--err); color: var(--err); }
+
 main { display: flex; flex: 1; min-height: 0; }
 .panel { flex: 1; padding: 24px 28px; overflow: auto; }
 .logpane {

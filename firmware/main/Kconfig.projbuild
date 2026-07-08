@@ -193,6 +193,18 @@ config APP_PROVISIONING_CONSOLE
         waits here until creds are written. Turn OFF only for a locked build whose credentials are
         compiled in or already in NVS (no field re-provisioning).
 
+config APP_SCAN_CONSOLE
+    bool "Scanner: enable the RS-485 scan-* discovery console (Pi scanner station)"
+    depends on APP_PROVISIONING_CONSOLE
+    default n
+    help
+        Registers read-only diagnostic commands (scan-cfg / scan-probe / scan-ids / scan-read /
+        scan-sweep) on the esp> REPL so the Pi 5 scanner/profiling station can drive the node's
+        Modbus master to discover an unknown RS-485 device's registers. Commands wrap only
+        modbus_master_read/_probe + rs485_init — they never write NVS/flash and never touch the LoRa
+        path — and are registered ONLY from the unprovisioned idle branch (UART1 free). This is the
+        scanner-station firmware variant; leave OFF (default) for production/field images.
+
 # ---------------------------------------------------------------------------
 # Phase 7b — power: light-sleep duty-cycling between samples.
 # ---------------------------------------------------------------------------

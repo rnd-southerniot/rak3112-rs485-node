@@ -155,17 +155,22 @@ function renderDone(panel) {
   $("#btnReset2").onclick = () => api("/session/reset");
 }
 
-// --- kiosk touch controls (no physical keyboard) ---------------------------------------------
-// Show the on-screen keyboard when a text field is focused, hide it otherwise; plus manual toggle
-// + an Exit button. All no-ops off a squeekboard kiosk.
-let oskShown = false;
-function osk(show) { if (show === oskShown) return; oskShown = show; api("/kiosk/keyboard", { show }); }
-document.addEventListener("focusin", (e) => { if (e.target.matches("input,select,textarea")) osk(true); });
-document.addEventListener("focusout", () => setTimeout(() => {
-  if (!document.querySelector("input:focus,select:focus,textarea:focus")) osk(false);
-}, 200));
-$("#kbToggle").onclick = () => osk(!oskShown);
-$("#kioskExit").onclick = () => { if (confirm("Exit the scanner kiosk to the desktop?")) api("/kiosk/exit"); };
-
+// Draw the UI FIRST so nothing below can keep the app from rendering.
 connect();
 api("/session").then((s) => { session = s; render(true); });
+
+// --- kiosk touch controls (no physical keyboard) ---------------------------------------------
+// Show the on-screen keyboard when a text field is focused, hide it otherwise; plus a manual toggle
+// + an Exit button. All no-ops off a squeekboard kiosk. Wrapped so a kiosk-only failure can never
+// blank the wizard.
+try {
+  let oskShown = false;
+  const osk = (show) => { if (show === oskShown) return; oskShown = show; api("/kiosk/keyboard", { show }); };
+  document.addEventListener("focusin", (e) => { if (e.target.matches("input,select,textarea")) osk(true); });
+  document.addEventListener("focusout", () => setTimeout(() => {
+    if (!document.querySelector("input:focus,select:focus,textarea:focus")) osk(false);
+  }, 200));
+  const kb = $("#kbToggle"), ex = $("#kioskExit");
+  if (kb) kb.onclick = () => osk(!oskShown);
+  if (ex) ex.onclick = () => { if (confirm("Exit the scanner kiosk to the desktop?")) api("/kiosk/exit"); };
+} catch (e) { console.error("kiosk controls init failed", e); }

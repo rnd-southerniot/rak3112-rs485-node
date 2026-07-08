@@ -1,0 +1,78 @@
+:root {
+  --bg: #0f1419; --panel: #171e26; --line: #2a3441; --fg: #e6edf3; --muted: #8b98a5;
+  --accent: #2f81f7; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.45 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px; border-bottom: 1px solid var(--line); background: #12181f;
+}
+.brand { font-weight: 700; letter-spacing: .3px; }
+.state {
+  font-weight: 700; text-transform: uppercase; font-size: 13px; letter-spacing: .5px;
+  padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line);
+}
+.state-idle { color: var(--muted); }
+.state-searching, .state-flashing, .state-probing, .state-profiling, .state-preparing_profile {
+  color: var(--accent); border-color: var(--accent);
+}
+.state-success { color: var(--ok); border-color: var(--ok); }
+.state-failed { color: var(--err); border-color: var(--err); }
+
+main { display: flex; flex: 1; min-height: 0; }
+.panel { flex: 1; padding: 24px 28px; overflow: auto; }
+.logpane {
+  width: 380px; border-left: 1px solid var(--line); background: #0c1116;
+  display: flex; flex-direction: column; min-height: 0;
+}
+.logpane-head { padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+#log { margin: 0; padding: 12px 14px; overflow: auto; flex: 1; font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; color: #b9c4cf; }
+
+h2 { margin: 0 0 12px; font-size: 22px; }
+.muted { color: var(--muted); }
+label { display: block; margin: 12px 0 6px; color: var(--muted); font-size: 13px; }
+input, select {
+  width: 100%; max-width: 420px; padding: 10px 12px; margin-top: 4px;
+  background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; font-size: 15px;
+}
+button {
+  margin-top: 16px; padding: 12px 20px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--fg); font-size: 15px; font-weight: 600; cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.ghost { background: transparent; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.actions { display: flex; gap: 12px; }
+
+.spinner {
+  width: 34px; height: 34px; margin: 20px 0; border-radius: 50%;
+  border: 3px solid var(--line); border-top-color: var(--accent); animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 18px; max-width: 900px; }
+.meta label { margin-bottom: 0; }
+
+.meter { margin: 18px 0 8px; max-width: 900px; }
+.meter-bar { height: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.meter-fill { height: 100%; width: 6%; background: var(--ok); transition: width .2s, background .2s; }
+.meter-fill.over { background: var(--err); }
+.meter-text { margin-top: 6px; font-size: 13px; color: var(--muted); }
+
+.tablewrap { overflow: auto; max-height: 46vh; margin: 8px 0 4px; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+thead th { position: sticky; top: 0; background: #12181f; color: var(--muted); }
+td input, td select { width: auto; min-width: 70px; max-width: 160px; margin: 0; padding: 6px 8px; font-size: 13px; }
+td input.key { min-width: 110px; }
+.conf { color: var(--muted); }
+
+.summary { max-width: 720px; }
+.summary code { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 6px 0; font-size: 12px; word-break: break-all; }

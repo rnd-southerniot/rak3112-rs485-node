@@ -21,6 +21,7 @@
 #include "prov_console.h"
 #include "profile_store.h"
 #include "provisioning.h"
+#include "status_led.h"
 #if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT || !CONFIG_APP_FIELD_SIMULATE
 #include "modbus_master.h"
 #include "rs485.h"
@@ -399,6 +400,7 @@ static void run_field_app(void)
 {
     field_cfg_t cfg;
     load_field_cfg(&cfg);
+    status_led_init(); /* onboard WS2812 (GPIO38) — node status; independent of LoRa/Modbus */
     const TickType_t period = pdMS_TO_TICKS(1000u * cfg.interval_s);
     const char *dev_name = (cfg.device == FIELD_DEV_RSFSJT) ? "RS-FSJT" : "MFM384";
 
@@ -439,6 +441,7 @@ static void run_field_app(void)
     for (;;) { /* outer: (re)discover the sensor, then run until it goes silent */
 #if !CONFIG_APP_FIELD_SIMULATE
         if (have_profile) {
+            status_led_set(STATUS_LED_SENSOR_WAIT); /* red breathe until a sensor answers */
             const uint8_t unit = discover_sensor_unit(prof, cfg.unit); /* blocks until a sensor */
             if (unit != cfg.unit) {
                 persist_unit(unit); /* scan once → save; later boots probe this unit first */
@@ -456,6 +459,7 @@ static void run_field_app(void)
         /* (2) OTAA join — only AFTER a sensor is found, and only once (session persists on
          * re-scan). */
         if (!joined) {
+            status_led_set(STATUS_LED_JOINING); /* amber pulse while joining */
             ESP_ERROR_CHECK(lora_init());
             /* §5 (CRM_PROVISIONING_WORKFLOW): retry OTAA join INDEFINITELY with backoff.
              * A board can power on before the field QR-scan registers it in ChirpStack, so
@@ -481,6 +485,7 @@ static void run_field_app(void)
             }
         }
 
+        status_led_set(STATUS_LED_IDLE); /* joined + reading — healthy */
         field_wdt_arm(); /* armed only for the steady-state read loop (not discovery/join) */
 #if !CONFIG_APP_FIELD_SIMULATE
         int silent = 0;
@@ -547,6 +552,14 @@ static void run_field_app(void)
 
             if (len > 0 && !go_rediscover) {
                 lora_send(buf, len);
+            }
+
+            /* Status LED: red-blink on a stale/failed read, else a green flash + healthy idle. */
+            if (flags & TELEMETRY_FLAG_STALE) {
+                status_led_set(STATUS_LED_SENSOR_FAULT);
+            } else if (len > 0 && !go_rediscover) {
+                status_led_set(STATUS_LED_IDLE);
+                status_led_event_uplink();
             }
 
 #if CONFIG_APP_DEBUG_WDT_STARVE

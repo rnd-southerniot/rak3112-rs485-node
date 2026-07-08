@@ -22,6 +22,7 @@
 #include "profile_store.h"
 #include "provisioning.h"
 #include "status_led.h"
+#include "modbus_slave_sim.h"
 #if CONFIG_APP_MODBUS_SCAN_ON_BOOT || CONFIG_APP_MODBUS_POLL_ON_BOOT || !CONFIG_APP_FIELD_SIMULATE
 #include "modbus_master.h"
 #include "rs485.h"
@@ -649,7 +650,9 @@ void app_main(void)
     run_led_heartbeat(); /* bench: breathe the WS2812 forever; does not return */
 #endif
 
-#if CONFIG_APP_MODBUS_POLL_ON_BOOT
+#if CONFIG_APP_MODBUS_SLAVE_SIM
+    run_modbus_slave_sim(); /* bench fixture: emulate an EEM400 Modbus slave — does not return */
+#elif CONFIG_APP_MODBUS_POLL_ON_BOOT
     run_modbus_poll(); /* bench bring-up mode — does not return */
 #elif CONFIG_APP_MODBUS_SCAN_ON_BOOT
     run_modbus_scan(); /* bench bring-up mode — does not return */

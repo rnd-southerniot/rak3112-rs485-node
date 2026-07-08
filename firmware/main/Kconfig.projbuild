@@ -93,6 +93,28 @@ config APP_MODBUS_POLL_FLOAT_CDAB
         ABCD (default) = big-endian word order; MFM384 reports this (endianness register 40070 = 1).
         Set CDAB only if the reading looks like garbage (wrong word order on some PLCs/meters).
 
+config APP_MODBUS_SLAVE_SIM
+    bool "Bench fixture: emulate a Modbus RTU slave (Honeywell EEM400 register map)"
+    default n
+    help
+        Turns this board into a Modbus RTU *slave/server* that answers FC03 reads with the Honeywell
+        EEM400-D-MO register map (52 holding registers, wire 0..51). Used to bench-test the Pi scanner
+        station end-to-end: wire this board's CN1 to a scanner node's CN1 and let the scanner discover
+        + profile it blind. Answers only FC03 (others -> exception 0x01; qty>20 or out-of-range ->
+        0x02). Does NOT join LoRaWAN. A test fixture, not a product feature — leave OFF for field
+        firmware.
+
+config APP_SLAVE_SIM_UNIT
+    int "Slave sim: Modbus unit ID"
+    depends on APP_MODBUS_SLAVE_SIM
+    range 1 247
+    default 3
+
+config APP_SLAVE_SIM_BAUD
+    int "Slave sim: baud rate (8N1)"
+    depends on APP_MODBUS_SLAVE_SIM
+    default 9600
+
 # ---------------------------------------------------------------------------
 # Field application (Phase 6c): sample a device -> encode -> LoRaWAN uplink.
 # This is the NORMAL firmware path (when neither scan nor poll bench mode is set).

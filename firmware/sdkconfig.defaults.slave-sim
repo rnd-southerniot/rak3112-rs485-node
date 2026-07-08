@@ -1,0 +1,7 @@
+# EEM400 Modbus RTU slave emulation — bench fixture for the Pi scanner station's P5 gate.
+# Build: idf.py -C firmware -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.slave-sim" build
+# Flash to a spare careflow board and wire its CN1 to a scanner node's CN1; the scanner then
+# discovers + profiles it blind. Answers FC03 with the Honeywell EEM400 register map. Not field firmware.
+CONFIG_APP_MODBUS_SLAVE_SIM=y
+CONFIG_APP_SLAVE_SIM_UNIT=3
+CONFIG_APP_SLAVE_SIM_BAUD=9600

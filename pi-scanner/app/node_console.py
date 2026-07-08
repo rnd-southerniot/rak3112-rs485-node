@@ -193,6 +193,32 @@ class NodeConsole:
                 return lines
         raise NodeError(f"timeout waiting for terminator after {line!r}: {lines!r}")
 
+    def send(self, line: str, slow: bool = False, deadline_s: float = 8.0) -> list[str]:
+        """Public send for prov-* onboarding. slow=True writes char-by-char (~4 ms/char) so a long
+        prov-profile blob doesn't drop characters on the USB-Serial-JTAG console."""
+        if not slow:
+            return self._cmd(line, deadline_s=deadline_s)
+        self._ser.reset_input_buffer()
+        for ch in line:
+            self._raw(ch.encode())
+            time.sleep(0.004)
+        self._raw(b"\r\n")
+        out: list[str] = []
+        end = time.monotonic() + deadline_s
+        while time.monotonic() < end:
+            raw = self._ser.readline()
+            if not raw:
+                continue
+            text = raw.decode("utf-8", "replace").strip()
+            if not text or text in ("esp>", "esp> "):
+                continue
+            if self._on_line:
+                self._on_line(text)
+            out.append(text)
+            if text.startswith("OK ") or text.startswith("ERR "):
+                return out
+        raise NodeError(f"timeout after slow send of {line[:24]}…")
+
     def scan_cfg(self, baud: int, parity: str, stop: int = 1) -> None:
         lines = self._cmd(f"scan-cfg {baud} {parity} {stop}")
         if not any(ln.startswith("OK scan-cfg") for ln in lines):

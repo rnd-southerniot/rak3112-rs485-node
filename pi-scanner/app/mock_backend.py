@@ -112,7 +112,7 @@ class MockOnboarding:
         self._log("mock flash: wrote scanner firmware + app (erase disabled)")
         time.sleep(self._delay)
 
-    def provision(self, artifacts, deveui: str = "") -> None:
+    def provision(self, artifacts, port=None) -> None:
         self._log(f"mock provision: wrote NVS creds + profile blob ({len(artifacts.blob_hex)//2} B)")
         time.sleep(self._delay)
 
@@ -120,7 +120,7 @@ class MockOnboarding:
         self._log("mock decoder: installed fleet codec on dev ChirpStack device-profile")
         time.sleep(self._delay)
 
-    def verify_uplink(self, artifacts) -> dict:
+    def verify_uplink(self, artifacts, deveui: str = "", timeout_s: int = 0) -> dict:
         self._log("mock verify: join + decoded uplink observed (device_byte matches)")
         time.sleep(self._delay)
         return {"joined": True, "decoded": True, "device_byte": None}

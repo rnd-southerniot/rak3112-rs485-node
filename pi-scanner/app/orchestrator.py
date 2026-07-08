@@ -83,7 +83,8 @@ class Orchestrator:
         from .onboarding import Onboarding
 
         node = NodeConsole(port, self.cfg.node_baud, on_line=lambda ln: self._log(ln))
-        return node, Onboarding(self.cfg, self._log)
+        cfg = dataclasses.replace(self.cfg, node_port=port)  # onboarding provisions on the same port
+        return node, Onboarding(cfg, self._log)
 
     # --- flow: search --------------------------------------------------------------------------
 

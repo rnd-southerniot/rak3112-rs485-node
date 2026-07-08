@@ -1,0 +1,19 @@
+[Unit]
+Description=Careflow RS-485 Scanner Station (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/rak3112-rs485-node/pi-scanner
+# Firmware-build service (this repo's api/, or the hub after cutover) + DEV ChirpStack only.
+Environment=SCANNER_API_BASE=http://10.10.8.169:8000
+Environment=CS_BASE=http://10.10.8.140:8080
+# SCANNER_API_TOKEN / node port can be added here or in an EnvironmentFile.
+ExecStart=/home/pi/rak3112-rs485-node/pi-scanner/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

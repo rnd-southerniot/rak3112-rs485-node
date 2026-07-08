@@ -9,3 +9,11 @@ paths = [
     '''hardware/schematic/.*''',
     '''\.env\.example$''',
 ]
+# Match the allow-list regexes against the whole source line (not just the extracted secret) so the
+# field-name context is available.
+regexTarget = "line"
+regexes = [
+    # device-profiles catalog/profile "profileKey"/"profile_id" are kebab-case model ids, not secrets;
+    # a long one (e.g. honeywell-eem400-scanned) can trip the generic-api-key entropy heuristic.
+    '''"(profileKey|profile_id)":\s*"[a-z0-9-]+"''',
+]

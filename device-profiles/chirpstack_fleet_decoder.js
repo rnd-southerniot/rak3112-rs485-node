@@ -38,6 +38,20 @@ function decodeUplink(input) {
     out["engine_run_s_s"] = u32(3 + 40);
     return { data: out };
   }
+  if (dev === 5) { // honeywell-eem400-scanned
+    if (b.length < 23) return { errors: ['honeywell-eem400-scanned payload short'] };
+    out.device = "EEM400-D-MO";
+    out["energy_t1_kWh"] = u32(3 + 0) / 100;
+    out["v_l1_V"] = u16(3 + 4);
+    out["i_l1_A"] = u16(3 + 6) / 10;
+    out["v_l2_V"] = u16(3 + 8);
+    out["i_l2_A"] = u16(3 + 10) / 10;
+    out["v_l3_V"] = u16(3 + 12);
+    out["i_l3_A"] = u16(3 + 14) / 10;
+    out["p_total_kW"] = u16(3 + 16) / 100;
+    out["q_total_kvar"] = u16(3 + 18) / 100;
+    return { data: out };
+  }
   if (dev === 3) { // honeywell-eem400
     if (b.length < 43) return { errors: ['honeywell-eem400 payload short'] };
     out.device = "EEM400C-D-MO";

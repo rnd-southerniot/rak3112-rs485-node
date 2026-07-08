@@ -53,8 +53,16 @@ def _operator():
     )
 
 
-def test_next_free_type_byte_is_5():
-    assert next_free_type_byte(PROFILES_DIR) == 5  # registry currently uses 1..4
+def test_next_free_type_byte():
+    import json
+
+    used = {
+        json.load(open(os.path.join(PROFILES_DIR, f)))["device"]["type_byte"]
+        for f in os.listdir(PROFILES_DIR)
+        if f.endswith(".json")
+    }
+    tb = next_free_type_byte(PROFILES_DIR)
+    assert tb not in used and tb == max(used) + 1  # allocates the next byte above the highest
 
 
 def test_refuses_to_emit_without_names():
@@ -79,9 +87,10 @@ def test_payload_budget_enforced():
 
 def test_emitted_profile_validates_and_serializes():
     cand = _candidate()
-    profile = assemble_profile(cand, _operator(), type_byte=5, profile_id="acme-testmeter9000")
-    assert profile["device"]["type_byte"] == 5
-    assert profile["payload"]["device_byte"] == 5
+    tb = next_free_type_byte(PROFILES_DIR)  # next free (adapts as profiles are added to the registry)
+    profile = assemble_profile(cand, _operator(), type_byte=tb, profile_id="acme-testmeter9000")
+    assert profile["device"]["type_byte"] == tb
+    assert profile["payload"]["device_byte"] == tb
     assert profile["payload"]["total_len"] <= 53
     assert profile["defaults"]["word_order"] == "CDAB"
     assert all(m["key"] for m in profile["measurands"])  # every measurand named

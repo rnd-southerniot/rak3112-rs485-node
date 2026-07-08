@@ -119,8 +119,11 @@ def pack_payload(measurands: list[CandidateMeasurand], budget: int = DR3_MAX - H
         if offset + size > budget:
             dropped.append(m.key)
             continue
-        # payload scale = engineering→wire; default 1 (operator tunes for decimals). Never 0.
-        fields.append({"key": m.key, "offset": offset, "encoding": enc, "scale": 1})
+        # payload scale = engineering→wire. Derive it from the measurand scale so the wire value keeps
+        # full precision (wire = eng / measurand_scale = raw): a 0.1-A measurand → payload scale 10
+        # (5.2 A → 52), a 0.01 scale → 100. Integer measurands stay scale 1. Never 0.
+        pscale = max(1, round(1.0 / m.scale)) if 0 < m.scale <= 1 else 1
+        fields.append({"key": m.key, "offset": offset, "encoding": enc, "scale": pscale})
         offset += size
     total_len = HEADER_LEN + offset
     return fields, total_len, dropped

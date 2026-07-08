@@ -95,17 +95,23 @@ def _scan_target(rmap: RegisterMap, default_fc: int) -> tuple[int, int]:
 
 def infer_profile(rmap: RegisterMap, hints: OperatorInput | None = None) -> CandidateProfile:
     default_fc = _dominant_fc(rmap)
-    word, _share = _best_word_order(rmap, default_fc)
+    word, share = _best_word_order(rmap, default_fc)
     by_addr = rmap.by_addr(default_fc)
     present = sorted(a for a, o in by_addr.items() if o.present)
     present_set = set(present)
+
+    # Only read pairs as float32 when the winning word order is plausible across MOST pairs — i.e. a
+    # coherent float meter (SELEC MFM384: share ~1.0). An integer meter (Honeywell EEM400) has a low,
+    # incoherent share, so a few pairs that happen to decode to a plausible float are NOT treated as
+    # float32; everything defaults to u16 for the operator to promote (u32 for real doubles).
+    float_mode = share >= 0.6
 
     measurands: list[CandidateMeasurand] = []
     consumed: set[int] = set()
     for a in present:
         if a in consumed:
             continue
-        pair_ok = (a % 2 == 0) and (a + 1 in present_set) and (a + 1 not in consumed)
+        pair_ok = float_mode and (a % 2 == 0) and (a + 1 in present_set) and (a + 1 not in consumed)
         if pair_ok:
             v = decode_f32(by_addr[a].raw or 0, by_addr[a + 1].raw or 0, word)
             if _plausible_f32(v):

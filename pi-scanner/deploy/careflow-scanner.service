@@ -10,10 +10,11 @@ WorkingDirectory=/home/pi/rak3112-rs485-node/pi-scanner
 # Firmware-build service (this repo's api/, or the hub after cutover) + DEV ChirpStack only.
 Environment=SCANNER_API_BASE=http://10.10.8.169:8000
 Environment=CS_BASE=http://10.10.8.140:8080
-# Session bus so the kiosk on-screen-keyboard toggle (squeekboard, sm.puri.OSK0) works from here.
-# Assumes the desktop user is uid 1000; adjust if not.
+# Session env so the kiosk keyboard toggle (wvkbd, a wlr-layer-shell OSK) launches on the Wayland
+# session from here. Assumes the desktop user is uid 1000 on wayland-0; adjust if not.
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+Environment=WAYLAND_DISPLAY=wayland-0
 # SCANNER_API_TOKEN / node port can be added here or in an EnvironmentFile.
 ExecStart=/home/pi/rak3112-rs485-node/pi-scanner/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
 Restart=always

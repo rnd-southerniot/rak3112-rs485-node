@@ -34,6 +34,14 @@ async def lifespan(_app: "FastAPI"):
 app = FastAPI(title="Careflow RS-485 Scanner Station", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def _no_cache(request, call_next):
+    # The kiosk is updated in place (rsync); never let Chromium serve a stale UI from disk cache.
+    resp = await call_next(request)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/api/ports")
 def list_ports() -> dict:
     ports = ["mock"]
@@ -89,18 +97,23 @@ async def reset() -> dict:
 
 @app.post("/api/kiosk/keyboard")
 async def kiosk_keyboard(body: dict) -> dict:
-    """Show/hide the on-screen keyboard (squeekboard, via its DBus interface). No-op off-Pi."""
+    """Show/hide the on-screen keyboard for touch-only kiosks.
+
+    Uses wvkbd (a wlr-layer-shell OSK that force-shows and types into the focused Chromium field) —
+    squeekboard auto-hides when no text-input is active, so it can't be reliably driven from here.
+    Launch = show, kill = hide. No-op if wvkbd isn't installed.
+    """
     import subprocess
 
-    show = "true" if bool((body or {}).get("show", True)) else "false"
+    show = bool((body or {}).get("show", True))
     try:
-        subprocess.run(
-            ["busctl", "--user", "set-property", "sm.puri.OSK0", "/sm/puri/OSK0",
-             "sm.puri.OSK0", "Visible", "b", show],
-            timeout=3, capture_output=True,
-        )
+        running = subprocess.run(["pgrep", "-x", "wvkbd-mobintl"], capture_output=True).returncode == 0
+        if show and not running:
+            subprocess.Popen(["wvkbd-mobintl", "-L", "300"])
+        elif not show and running:
+            subprocess.run(["pkill", "-x", "wvkbd-mobintl"])
     except Exception:
-        pass  # not on a squeekboard kiosk — harmless
+        pass
     return {"ok": True}
 
 

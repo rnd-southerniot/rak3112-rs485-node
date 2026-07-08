@@ -27,6 +27,12 @@ PREF="$HOME/.config/chromium/Default/Preferences"
   's/"exited_cleanly":false/"exited_cleanly":true/; s/"exit_type":"[^"]*"/"exit_type":"Normal"/g' \
   "$PREF" 2>/dev/null
 
+# Clear a stale single-instance lock left by an unclean exit (the ⏻ Exit button and reboots both kill
+# Chromium without releasing it). A leftover lock makes this launch forward to the now-dead PID and
+# never map a window — the kiosk shows only the desktop. Safe: exactly one Chromium instance runs.
+rm -f "$HOME/.config/chromium/SingletonLock" "$HOME/.config/chromium/SingletonSocket" \
+      "$HOME/.config/chromium/SingletonCookie" 2>/dev/null
+
 exec chromium-browser --app="$URL" --class=careflow-kiosk --ozone-platform=wayland \
   --no-first-run --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
   --disable-features=TranslateUI --check-for-update-interval=31536000

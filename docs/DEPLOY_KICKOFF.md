@@ -5,6 +5,41 @@
 
 ---
 
+## Since the brief was written (2026-07-09) — read first
+
+Context discovered/changed on Arif's side after this brief's first draft. It supersedes any older
+detail below.
+
+1. **Deploy sha = `1f29da4`.** `main` moved (PR #20 merged). Deploy that commit; rollback target is the
+   currently-live **`b60ea9d`** (13 commits back — this is a big version jump, not a patch). No `:latest`.
+2. **The image build was broken and is now fixed on `main` — but it needs a token.** P7 moved the
+   LoRaWAN stack into the **private** repo `rnd-southerniot/siot-lorawan-node` (git dep in
+   `firmware/main/idf_component.yml`), so a clean `docker build` used to fail at `idf.py build`
+   (can't clone a private repo). PR #20 fixed the `Dockerfile` to fetch it as a local component. **You
+   must supply `COMPONENT_REPO_TOKEN`** (fine-grained PAT, read-only Contents on `siot-lorawan-node`) or
+   have read access to that repo — **confirm with Arif before building**, or the build stalls. Exact
+   command in the "Executable runbook" below (BuildKit secret; pre-fetch fallback documented too).
+3. **Pi reachability is a config step, not just a check.** `deploy/cluster.yaml` makes this service
+   **ClusterIP-only (no NodePort/route)**. The bench Pi scanner (`192.168.68.109`) is a new
+   out-of-cluster consumer expecting `http://10.10.8.169:8000` and **cannot** reach a bare ClusterIP.
+   Don't just curl it — confirm a route exists and **create one (NodePort/node-IP) if not**. This is the
+   most likely "container healthy but deploy not done" gap.
+4. **Option A only.** Redeploy `rak3112-rs485-node/api/` at `1f29da4`. Do **not** start the hub
+   (`siot-node-firmware-automation`) cutover in the same session.
+5. **Success gate:** `GET /v1/sensors` (Bearer) lists **`honeywell-eem400-scanned`** — expect it with
+   `flashable:false` (the model-specific reader isn't compiled; only the generic profile reader is —
+   that's correct). Also check `/healthz`, `/v1/products`, `/v1/flash-manifest?product=careflow`,
+   `/v1/provisioning-protocol`.
+6. **Contract is source-independent (FYI).** The hub's `api/` is byte-identical to this repo except
+   `/v1/flash-manifest` (hub is one rev behind on `product`/`path` metadata; hub PR #1 fixes it,
+   non-blocking — the flash-*part* endpoint incl. `X-Binary-Sha256` and the nvs-blank/dual-OTA part set
+   is already identical, so flashing is functionally the same today). Does not affect this deploy.
+7. **Two-stack rule:** dev ChirpStack `10.10.8.140` vs production (`chirpstack.siot.solutions`).
+   **Prompt dev-vs-production before any CRM/ChirpStack action.** Production is read-only unless Arif
+   authorizes. Decoder install is a separate, later step (Pi does it on dev only) — not this deploy.
+
+---
+
 ## Paste this into Fahim's Claude Code
 
 You're helping deploy the **Careflow RS-485 ⇄ LoRaWAN** firmware-automation service, with Arif present.

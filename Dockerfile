@@ -9,9 +9,18 @@
 #   - No ESP-IDF toolchain in the final image (4.4 GB builder stays in the cache).
 #   - Serves the cached firmware.bin via MinIO presigned URLs (D-06).
 #
-# Build (from the rak3112-rs485-node repo root, checked out at the pinned tag):
-#   git checkout phase-6-modbus-green
-#   docker build -t fahim0173/rak3112-firmware-service:phase-6-modbus-green .
+# Build (from the rak3112-rs485-node repo root, checked out at the git sha you are tagging).
+# Since P7 the LoRaWAN stack lives in the PRIVATE component rnd-southerniot/siot-lorawan-node
+# (firmware/main/idf_component.yml git: dep), so the builder needs read access to that repo.
+# A fine-grained PAT (read-only Contents on siot-lorawan-node) is passed as a BuildKit secret;
+# it is used only to fetch the component and is never written to any image layer:
+#   export COMPONENT_REPO_TOKEN=<fine-grained PAT>
+#   DOCKER_BUILDKIT=1 docker build \
+#     --secret id=component_repo_token,env=COMPONENT_REPO_TOKEN \
+#     --build-arg FIRMWARE_TAG=<git-sha> \
+#     -t fahim0173/rak3112-firmware-service:<git-sha> .
+# (Fallback without a Dockerfile secret: pre-fetch the component into
+#  firmware/components/siot-lorawan-node/ before `docker build` — see docs/DEPLOY_KICKOFF.md.)
 #
 # Decisions implemented: D-01 (compiled_readers.json at build time), D-05 (generic .bin),
 #   D-06 (build-once; tag-keyed MinIO cache), D-07 (placeholder creds; no secret in artifact).
@@ -38,9 +47,31 @@ COPY firmware/main/lora_credentials.h.example /build/firmware/main/lora_credenti
 
 WORKDIR /build/firmware
 
+# Ensure the PRIVATE shared LoRaWAN component is present as a LOCAL component in
+# firmware/components/ — this takes precedence over the git: managed dependency in
+# main/idf_component.yml, so the `idf.py build` below performs NO authenticated clone
+# (mirrors the CI idf-build job). Two supported paths:
+#   (A) Secret build (default): pass --secret id=component_repo_token; this RUN clones the
+#       component with the token. The token is mounted only for this RUN (never in a layer);
+#       the tokenized remote URL lives only inside .git, deleted immediately after the clone.
+#   (B) Pre-fetch fallback: check the component out into firmware/components/siot-lorawan-node/
+#       BEFORE `docker build` (it is copied in by `COPY firmware/` above, and is NOT excluded by
+#       .dockerignore). This RUN then detects it and skips the clone — no secret needed.
+# The pinned ref v0.1.0 must match the version in main/idf_component.yml.
+RUN --mount=type=secret,id=component_repo_token \
+    if [ -d /build/firmware/components/siot-lorawan-node ]; then \
+      echo "siot-lorawan-node already present (pre-fetch fallback) — skipping clone"; \
+    else \
+      TOKEN="$(cat /run/secrets/component_repo_token)" && \
+      git clone --depth 1 --branch v0.1.0 \
+        "https://${TOKEN}@github.com/rnd-southerniot/siot-lorawan-node.git" \
+        /build/firmware/components/siot-lorawan-node && \
+      rm -rf /build/firmware/components/siot-lorawan-node/.git; \
+    fi
+
 # Compile the firmware.
-# idf_component.yml declares jgromes/radiolib==7.7.1 — the component manager downloads
-# it from components.espressif.com at build time (internet required; see Pitfall 3).
+# jgromes/radiolib==7.7.1 is pulled transitively through the siot-lorawan-node component (local,
+# fetched above); espressif/led_strip is fetched from components.espressif.com (internet required).
 # Output: build/rak3112_rs485_node.bin (project name from firmware/CMakeLists.txt).
 RUN export IDF_PATH_FORCE=1 && . "$IDF_PATH/export.sh" && idf.py set-target esp32s3 && idf.py build
 
@@ -48,7 +79,8 @@ RUN export IDF_PATH_FORCE=1 && . "$IDF_PATH/export.sh" && idf.py set-target esp3
 # meter.h. These suffixes (e.g. "mfm384", "rsfsjt") are the authoritative signal for
 # which readers are compiled into this binary — the FastAPI service uses this file to
 # compute the flashable flag on GET /v1/sensors without any static field in the JSON
-# registry (D-01). Expected output: ["mfm384", "rsfsjt"] for the phase-6-modbus-green tag.
+# registry (D-01). Expected output on main: ["mfm384", "rsfsjt", "profile"] (the ADR-006 generic
+# profile-driven reader is compiled in alongside the two model-specific readers).
 RUN python3 -c "\
 import re, json, pathlib; \
 h = pathlib.Path('/build/firmware/components/meter/include/meter.h').read_text(); \

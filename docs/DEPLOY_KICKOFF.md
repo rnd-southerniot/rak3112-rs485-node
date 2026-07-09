@@ -37,6 +37,18 @@ detail below.
 7. **Two-stack rule:** dev ChirpStack `10.10.8.140` vs production (`chirpstack.siot.solutions`).
    **Prompt dev-vs-production before any CRM/ChirpStack action.** Production is read-only unless Arif
    authorizes. Decoder install is a separate, later step (Pi does it on dev only) — not this deploy.
+8. **Leave `SENSEFLOW_ROOT` UNSET.** This is a **careflow-only** deploy. `SENSEFLOW_ROOT` is empty by
+   default (`api/config.py`) and is not set in `k8s/` or the image, which keeps the second product
+   (senseflow) correctly inert — `api/products.py` registers senseflow **only** when `SENSEFLOW_ROOT`
+   is set. **Do not set it.** Turning senseflow on is a separate, Arif-owned change needing three things
+   not prepared here: (a) the senseflow **artifact** (`.bin` + boot parts + `device-profiles/` catalog
+   with `blobHex` + `compiled_sensors.json`) mounted under the root path (intended
+   `/app/products/senseflow`), (b) `SENSEFLOW_ROOT` pointing at it, (c) `SENSEFLOW_FIRMWARE_TAG` set to
+   that artifact's tag. ⚠️ `build_products()` does **not** validate the path — setting `SENSEFLOW_ROOT`
+   without the artifact present registers senseflow but then **500s** on its per-product endpoints
+   (`/v2/sensors?product=senseflow`, `/v1/flash-manifest?product=senseflow`, …). So it's leave-off, not
+   point-at-empty-dir. **Post-deploy check:** `GET /v1/products` must list **`careflow` only** — if
+   `senseflow` appears, `SENSEFLOW_ROOT` got set unintentionally; unset it and restart.
 
 ---
 

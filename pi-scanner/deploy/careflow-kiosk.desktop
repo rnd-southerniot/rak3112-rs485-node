@@ -1,6 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=Careflow Scanner Kiosk
-Comment=Open the scanner wizard fullscreen on login
-Exec=/home/pi/scanner/kiosk.sh
+# Start the supervised kiosk *user* service on login (Restart=always → auto-recovers). The unit runs
+# kiosk.sh; keeping the launch in the service (not here) means a crash restarts cleanly. See
+# deploy/careflow-kiosk.service + deploy/README.md.
+Comment=Start the supervised Careflow kiosk user service on login
+Exec=systemctl --user start careflow-kiosk.service
 X-GNOME-Autostart-enabled=true

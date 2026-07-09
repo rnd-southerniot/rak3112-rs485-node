@@ -11,18 +11,28 @@ cd ~ && git clone <repo> rak3112-rs485-node
 cd rak3112-rs485-node/pi-scanner
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
-# 2. edit the service env (firmware-service URL, ChirpStack dev base, token)
-sudoedit /etc/systemd/system/careflow-scanner.service   # copy from deploy/, adjust paths/IPs
-
-# 3. install + enable both units
-sudo cp deploy/careflow-scanner.service deploy/careflow-kiosk.service /etc/systemd/system/
+# 2. scanner backend — a SYSTEM unit (holds the service env: firmware-service URL, dev ChirpStack
+#    base, token). Copy from deploy/, set the env, enable.
+sudo cp deploy/careflow-scanner.service /etc/systemd/system/
+sudoedit /etc/systemd/system/careflow-scanner.service   # adjust paths/IPs, set the token
 sudo systemctl daemon-reload
 sudo systemctl enable --now careflow-scanner.service
-sudo systemctl enable --now careflow-kiosk.service     # needs a desktop session (DISPLAY=:0)
+
+# 3. kiosk — a systemd USER unit (NOT a system unit: it must share the graphical session so Chromium
+#    can attach to the Wayland socket). The XDG autostart entry starts it on login; Restart=always
+#    auto-recovers it.
+cp deploy/kiosk.sh ~/scanner/kiosk.sh && chmod +x ~/scanner/kiosk.sh
+mkdir -p ~/.config/systemd/user ~/.config/autostart
+cp deploy/careflow-kiosk.service ~/.config/systemd/user/
+cp deploy/careflow-kiosk.desktop ~/.config/autostart/    # runs `systemctl --user start careflow-kiosk`
+systemctl --user daemon-reload
+systemctl --user enable --now careflow-kiosk.service     # needs the graphical (labwc) session
 ```
 
-The operator sees only the wizard; no terminal is needed for normal use. `journalctl -u
-careflow-scanner -f` for logs.
+The operator sees only the wizard; no terminal is needed for normal use. Logs: `journalctl -u
+careflow-scanner -f` (backend) and `systemctl --user status careflow-kiosk` / `journalctl --user -u
+careflow-kiosk -f` (kiosk). Reload the kiosk after a config change with `systemctl --user restart
+careflow-kiosk`.
 
 ## On-screen keyboard (touch, no physical keyboard)
 

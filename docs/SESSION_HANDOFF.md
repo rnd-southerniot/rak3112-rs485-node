@@ -1,139 +1,64 @@
-# Session handoff — 2026-07-09 (rak3112-rs485-node)
+# Session handoff — 2026-07-12 (rak3112-rs485-node)
 
-Personal handoff of a long working session. Everything below is the *current* state; nothing is
-pending mid-flight. Repo `main` is at **`1046f5e`**, **no open PRs**.
+Handoff of a long **operational** session: stood up a full dev mirror of prod and proved the **entire
+CRM flashing workflow end-to-end for BOTH products** (careflow + senseflow), on real hardware, up to
+ChirpStack. **No careflow firmware code changed this session** — `main` is at **`ac31d77`** (C6, #24).
+Open PR: **#25** (`provision-node-prod` skill — docs, unmerged, your call).
 
----
-
-## 1. What got done this session (all merged to `main`)
-
-| # | PR | Commit | What |
-|---|---|---|---|
-| 1 | — | — | **Careflow node recovery + decode fix** (no PR — bench/ops) |
-| 2 | #15 | `84af341` | **WS2812 node-status LED** (GPIO38): boot/sensor-wait/joining/idle/fault + uplink flash |
-| 3 | #16 | `6a1b00a` | **Pi 5 RS-485 scanner/profiling station** (P0–P5): firmware `scan-*` console + `pi-scanner/` FastAPI+kiosk |
-| 4 | #17 | `0ab9b72` | **`honeywell-eem400-scanned` device profile** (type_byte 5) — produced blind by the scanner |
-| 5 | #18 | `1046f5e` | **Kiosk touch controls** (on-screen keyboard + Exit) + white-screen/bodyless-api fixes |
-
-Plus a bench-only branch **`test/eem400-slave-sim`** (pushed, not merged) — the EEM400 Modbus slave
-emulator firmware used to blind-test the scanner.
-
-### 1a. Careflow decode/re-join fix (start of session)
-The careflow node `3c:dc:75:6f:85:dc` was uplinking but **not decoding** on dev ChirpStack — root
-cause was a **session desync**: after a reflash the board restored a stale NVS LoRaWAN session and kept
-transmitting `uplink OK` (unconfirmed = no feedback) while ChirpStack had dropped the session, so
-`last_seen` was frozen. **Fix = force a fresh OTAA join by erasing NVS** (`esptool erase_region 0x9000
-0x6000`) → re-provision from `firmware/.env` → JOINED → RS-FSJT uplinks decoded end-to-end (14 uplinks,
-`{device:"RS-FSJT-N01", wind_mps, stale:false}`). Captured in memory `lorawan-session-desync-recovery`.
-
-### 1b. Pi scanner station (the big build — P0–P5)
-Turns an **unknown** RS-485 Modbus device into a reusable `device-profiles/profiles/<model>.json`.
-- **Firmware** `firmware/main/scan_console.c` (`CONFIG_APP_SCAN_CONSOLE`, default off): read-only
-  `scan-cfg/-probe/-ids/-read/-sweep` wrapping `modbus_master_*`, registered only in the unprovisioned
-  idle branch. Build variant `sdkconfig.defaults.scanner`.
-- **Host** `pi-scanner/`: `node_console` → `sweep_engine` (discover + register map) → `inference`
-  (structure only) → operator labels → `profile_emitter` (shells out to the committed generators) →
-  `onboarding`. FastAPI + zero-framework kiosk UI. 23 host tests, CI job `pi-scanner-tests`.
-- **Validated blind on hardware** via a two-board loopback (see §2). Two real bugs the live test
-  surfaced + fixed: inference float-eagerness on integer meters; lossless payload scale.
-
-### 1c. Pi kiosk deployment (co-developed with the on-device Claude Code)
-Deployed the scanner as a touchscreen kiosk on the bench Pi. Solved: white-screen after reboot
-(Chromium crash-restore flag + stale **SingletonLock**), touch-only controls (on-screen keyboard +
-two-tap Exit), and the keyboard mechanism — **squeekboard auto-shows via Chromium `--enable-wayland-ime
---wayland-text-input-version=3` + a labwc Maximize windowRule on a `--app` (not `--kiosk`) window**.
-Also fixed a latent **bodyless-`api()` GET→404** on Confirm/Reset/Retry.
-
-### 1d. Handoff docs for Fahim (deploy is tomorrow morning)
-`docs/DEPLOY_KICKOFF.md` (deploy runbook/prompt) and `docs/FAHIM_HANDOFF.md` (full architecture + CRM/
-ChirpStack flow for both node products). **Both untracked** (local files, not committed).
+> The substance of this session lives in **auto-memory** (`dev-full-flash-pipeline`,
+> `dev-crm-mirrors-prod`, `dev-gateway-on-140-chirpstack`, `next-session-brainstorm-context`) and in the
+> **`NOTE_FOR_FAHIM`** (findings that affect prod). This doc is the index.
 
 ---
 
-## 2. Bench hardware — current wiring
+## 1. What got done (operational — dev mirror + E2E, no repo code changes)
 
-| Board (MAC) | Role | Where |
-|---|---|---|
-| `3c:dc:75:6f:7d:c4` | **Scanner node** (scan firmware) | on the **Pi's** USB → `/dev/ttyACM0` |
-| `3c:dc:75:6f:81:78` | **EEM400 slave-sim** (emulated device; fw on `test/eem400-slave-sim`) | powered on bench, **CN1 jumpered A/B/GND to the scanner node** |
-| `3c:dc:75:6f:85:dc` | Careflow project board (RS-FSJT field node, joined dev ChirpStack) | **disconnected** (by Arif) |
+| Area | Result |
+|---|---|
+| **Dev CRM mirror** | `10.10.8.140` now runs Fahim's **exact prod images** (`scomm-crm-api` + `scomm-crm-web`) + the careflow firmware-service + MinIO/Postgres. DB reset → prod schema (24 migrations) → seeded `admin@southerneleven.com`. Contract verified == prod. |
+| **Real gateway** | RAKPiOS SX1302 gw (`192.168.68.106`) moved onto dev ChirpStack `10.10.8.140` as concentrator EUI **`0016C001F13681DF`** — ONLINE, relaying uplinks. |
+| **Flasher UI** | Prod Phase-6 WebSerial flasher (prod `scomm-crm-web` image) + nginx `/crm-api` proxy → reach via `ssh -L 8090:localhost:8090 siot-new` → `http://localhost:8090`. |
+| **fw-svc both products** | Overlay image (C6 + 5 profiles) over `b60ea9d` + senseflow artifact mounted (`SENSEFLOW_ROOT`) → `/v1/products = [careflow, senseflow]`. |
+| **E2E careflow** | Real RAK3112 `85:dc` + **real RS-FSJT** sensor: CRM flash → mint → provision → factory-scan → **real join via gateway → uplink** in ChirpStack. PASS |
+| **E2E senseflow** | Real **RAK3312 WisBlock** node `89:24` (`LORA_SMOKE` firmware): same CRM flow → **real join → uplink** (`devAddr=0136ca2d`). PASS |
 
-Backup: the stepper firmware that was on `7d:c4` before repurposing is saved at
-`…/scratchpad/stepper-7dc4-backup.bin` (SHA `b1a8b1ac…`) — restore with `esptool write_flash 0x0 <file>`.
+## 2. Key findings (in `NOTE_FOR_FAHIM` — affect PROD)
 
----
+1. **Cross-tenant gateway.** The CRM registers each device into a **per-client ChirpStack tenant**; a
+   private gateway then blocks all cross-tenant joins (appKey matches, no join-accept, board logs `-1116`).
+   Fix on the **gateway's tenant**: `private_gateways_up = false`, `private_gateways_down = false`. **Prod
+   likely has this latent.**
+2. **Senseflow artifact must be `CONFIG_APP_LORA_SMOKE`, not the gate-9 stub.** The senseflow gate runner
+   (`main/lorawan_service.c`) is a pure **LoRaWAN stub** (`init_stub`/`uplink_stub_ok`, never hits the
+   radio). The real SX1262 field app is behind `LORA_SMOKE` (real join + profile-driven read + encode +
+   uplink). The pre-built `senseflow-p4-green` artifact was the stub → never joins real ChirpStack.
+3. **Careflow C6 redeploy** (still pending on Fahim): live fw-svc `b60ea9d` is pre-C6; redeploy from `main`
+   (`ac31d77`) for `prov-profile` + the 5th profile.
 
-## 3. The bench Pi (kiosk)
+## 3. State of things
 
-- **`pi@192.168.68.109`** — Raspberry Pi 5, hostname `mcp-gateway`, aarch64, Raspberry Pi OS bookworm /
-  labwc (Wayland), 10" touch. **Also runs the MCP Pi Gateway on :8000** — the scanner uses **:8080**,
-  don't touch :8000.
-- **SSH needs the explicit key:** `ssh -i ~/.ssh/id_ed25519_siot_dev_m5 -o IdentitiesOnly=yes pi@192.168.68.109`
-  (default key isn't offered).
-- **App:** `~/scanner/pi-scanner` (rsync'd, **not** a git checkout). **Service:** `careflow-scanner`
-  (systemd, enabled, `127.0.0.1:8080`). **Kiosk:** `~/.config/autostart/careflow-kiosk.desktop` →
-  `~/scanner/kiosk.sh` (Chromium `--app`). Boots straight into the wizard.
-- **Manage:** `systemctl is-active careflow-scanner`; reload kiosk (survives SSH) =
-  `systemd-run --user -q --unit=careflow-kiosk bash ~/scanner/kiosk.sh` after `pkill -f '[c]hromium'`;
-  view the session live from the Mac via an SSH tunnel: `ssh -L 8080:localhost:8080 … pi@… 'exec …'`
-  then open `http://localhost:8080`.
-- Host configs are committed in the repo at `pi-scanner/deploy/{labwc-rc.xml,wf-panel-pi.ini,kiosk.sh,
-  careflow-kiosk.desktop,careflow-scanner.service}` + `pi-scanner/deploy/README.md`.
+- **Repos:** careflow `main` = `ac31d77` (clean, pushed); senseflow (`rak4630-e-ink`) `feat/buttons-field-app`
+  = `e2f6534` (clean, pushed). PR #25 open (provision-node-prod skill).
+- **Dev env** (`ssh siot-new` = `10.10.8.140`, `/root/southern-iot`, docker compose): mirror + gateway +
+  both products live. Backups on box: compose `.premirror-*`, `southern-iot-scomm-web:premirror-web`,
+  `senseflow-artifact/` currently holds the **LORA_SMOKE** build.
+- **Bench:** `85:dc` careflow (RS-FSJT) + `89:24` RAK3312 WisBlock senseflow — both joined/uplinking to dev
+  ChirpStack.
 
----
+## 4. Next session — BRAINSTORM (not started here, by design)
 
-## 4. Tomorrow (2026-07-09 AM) — deploy with Fahim
+Plan Arif's **standalone platform** with a **multi-agent workflow** (see memory
+`next-session-brainstorm-context`): fresh VM + independent repos (no existing repo patched) — ops stack
+(CRM/ChirpStack/NodeRED/InfluxDB, single compose) + one multi-product firmware repo (device-profiles +
+decoder lib + knowledge-base service) + binaries hub + **Grafana/Home-Assistant dashboards with MCP
+automation** + **Mattermost** integration. Everything up to ChirpStack is proven PoC; the **dashboard layer
+is the genuinely new work**.
 
-- **Task:** deploy the firmware-build/provision service (`api/`) to Fahim's k8s. **Recommendation:
-  Option A** (redeploy this repo's `api/`) — ship the new scanner profile + P7 hardening as one small
-  reversible step. **Do NOT** also start the hub (`siot-node-firmware-automation`) cutover — separate,
-  hardware-verify first.
-- **Start point:** hand Fahim's Claude Code `docs/DEPLOY_KICKOFF.md`; first concrete step is diffing the
-  cluster's deployed image git-sha vs `main` HEAD (big version jump). Success check = `GET /v1/sensors`
-  lists `honeywell-eem400-scanned`; then confirm the Pi reaches the service at `http://10.10.8.169:8000`.
-- **Guardrails:** two ChirpStack stacks — **prompt dev (10.10.8.140) vs production
-  (crm/chirpstack.siot.solutions, Fahim's k8s 10.10.8.168) before any CRM/ChirpStack action**;
-  production is read-only unless Arif authorizes; no `:latest`; pin the image to the git sha.
+## 5. Open items
 
----
-
-## 5. Deferred / open (not blocking)
-
-- **Hub cutover** — move `api/`+`tools/`+`device-profiles/` to `siot-node-firmware-automation` (needs
-  hardware-verify; Fahim-coordinated).
-- **device_profile v1 → v2** unification (senseflow uses v2 multi-bus; careflow still v1).
-- **P5 live uplink leg for the scanner** — the scanner's discover→infer→package is proven blind on
-  hardware; the LoRaWAN uplink-verify leg was skipped (already proven in P5/P6). Would need `7d:c4`
-  registered as a device on dev ChirpStack.
-- **Real-MFM384 uplink** leg (meter not on the home bench).
-- **`85:dc` field node** — left disconnected; was the joined RS-FSJT node on dev ChirpStack.
-- **Two untracked docs** (`DEPLOY_KICKOFF.md`, `FAHIM_HANDOFF.md`, and this `SESSION_HANDOFF.md`) — not
-  committed. Offer stands to open a small docs PR if you want them in the repo.
-
----
-
-## 6. Gotchas learned this session (save future time)
-
-- **USB-Serial-JTAG console:** read with **DTR asserted** (`dtr=True`) to flush TX — the *opposite* of
-  the UART rule. Reset on the USJ is a USB control sequence (esptool), not DTR/RTS toggling.
-- **LoRaWAN session desync:** `uplink OK` on an *unconfirmed* frame means nothing about acceptance —
-  check ChirpStack `last_seen`. Fix a desync with a fresh OTAA join (erase NVS `lorawan`+`prov`).
-- **Kiosk (labwc/Wayland):** `--kiosk` hides the on-screen keyboard layer → use `--app` + a labwc
-  Maximize windowRule; clear Chromium `SingletonLock/Socket/Cookie` before relaunch or it maps no
-  window (shows only the desktop); `--enable-wayland-ime` is what makes squeekboard type into fields.
-- **Launching GUI over SSH:** `setsid`/`nohup` get reaped when the SSH session ends — use
-  `systemd-run --user --unit=…` (survives disconnect) or the desktop autostart.
-- **gitleaks CI (`fetch-depth: 0`) scans *all* fetched commits** — a `profileKey` on another branch can
-  fail an unrelated PR; the allowlist must reach `main` (merge the profile PR first).
-- **`api()` helper GETs when bodyless** — action endpoints are POST; pass `{}` to force POST.
-- **`pkill -f "uvicorn app.main"`** matches your own SSH command's arg string → kills your session; use
-  `fuser -k 8080/tcp` or the `[u]vicorn` regex trick.
-
----
-
-## 7. Fast resume pointers
-
-- Memory index: `…/memory/MEMORY.md` (updated: `pi-scanner-station`, `lorawan-session-desync-recovery`).
-- Architecture + CRM/ChirpStack flow: `docs/FAHIM_HANDOFF.md`.
-- Scanner station internals: `pi-scanner/README.md`; phase plan: `~/.claude/plans/generic-jingling-owl.md`.
-- Authoritative CRM sequence: `docs/CRM_PROVISIONING_WORKFLOW.md` + `docs/PROVISIONING_API_CONTRACT.md`.
+- PR #25 (provision-node-prod skill) — merge decision.
+- Fahim: gateway private-flag check · senseflow LORA_SMOKE artifact · careflow C6 redeploy · senseflow
+  prod-enablement (SENSEFLOW_ROOT + product + profiles).
+- New WisBlock senseflow hardware (RAK1921 OLED, RAK1905/12025/12034 motion sensors) — **no drivers/profiles
+  yet** = firmware dev for the new plan.
+- Rotate the public-repo CRM seed password (`SiotAdmin2026!`).

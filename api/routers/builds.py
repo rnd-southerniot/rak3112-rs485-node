@@ -172,7 +172,7 @@ _CMD_CREDS = {
 }
 _CMD_PROFILE = {
     "id": "prov-profile",
-    "description": "Store the selected device-profile blob in NVS (I2C sensor map + ADR-005 payload)",
+    "description": "Store the selected device-profile blob in NVS (device register/sensor map + ADR-005 payload)",
     "syntax": "prov-profile <hexblob>",
     "example": "prov-profile 02100176…",
     "nvsKeys": ["prov/profile"],

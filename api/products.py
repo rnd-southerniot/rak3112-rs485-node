@@ -60,7 +60,7 @@ def build_products(settings: Settings) -> dict[str, "Product"]:
             flash_dir=fw.parent,
             reader_manifest=_REPO / "compiled_readers.json",
             reader_map=CAREFLOW_READER_TO_BYTE,
-            prov_command_ids=("modbus", "creds", "show"),
+            prov_command_ids=("modbus", "creds", "profile", "show"),
             boot_markers=("[creds:NVS]", "PSRAM", "modbus"),
             profiles_dir=_REPO / "device-profiles" / "profiles",
             serializer_path=_REPO / "device-profiles" / "profile_to_blob.py",

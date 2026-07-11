@@ -121,6 +121,24 @@ def test_provisioning_protocol_senseflow_has_profile_no_modbus(senseflow_client)
     assert body["firmwareTag"] == "senseflow-p4-green"
 
 
+def test_provisioning_protocol_careflow_advertises_profile(senseflow_client):
+    """C6: careflow's protocol advertises prov-profile natively (was omitted → the CRM needed a pinned
+    prov-profile fallback). Order is write-then-verify. careflow is the default product; the fixture
+    registers it alongside senseflow."""
+    r = senseflow_client.get(
+        "/v1/provisioning-protocol",
+        params={"product": "careflow"},
+        headers=senseflow_client.auth_header,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    ids = [c["id"] for c in body["commands"]]
+    assert ids == ["prov-modbus", "prov-creds", "prov-profile", "prov-show"]
+    # careflow is Modbus — the shared profile-command description must not be I2C-specific.
+    prof = next(c for c in body["commands"] if c["id"] == "prov-profile")
+    assert "I2C" not in prof["description"]
+
+
 def test_flash_manifest_senseflow(senseflow_client):
     r = senseflow_client.get(
         "/v1/flash-manifest", params={"product": "senseflow"}, headers=senseflow_client.auth_header

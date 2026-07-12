@@ -10,6 +10,15 @@ Creates one OTAA device in Southern IoT's **production** ChirpStack via **gRPC-w
 Idempotent — re-running with the same DevEUI is safe (`ALREADY_EXISTS` is ignored; the stored key is
 read back so the printed AppKey is authoritative).
 
+> **⚠ ALWAYS CHECK FIRST — a pre-existing DevEUI keeps its OLD AppKey.** `CreateKeys` is a **no-op on
+> an existing device**, so if the DevEUI is already registered (common: dev-DB not fully reset, or a
+> device from a prior bring-up), a freshly-passed `APP_KEY` is **silently ignored** — the STORED key
+> wins. Flashing your intended key then fails to join with an **AppKey/MIC mismatch (RadioLib `-1116`,
+> "DevNonce persisted")**. The script now **pre-checks `GetKeys` and WARNs** on a mismatch; heed it.
+> To actually apply YOUR key (and clear the DevNonce history so the fresh join is accepted):
+> **`lorawan-deprovision <deveui>` then re-run** `provision.py` with your `APP_KEY`. Otherwise flash the
+> **stored** key the script prints. Rule of thumb: the on-node NVS AppKey MUST equal CS `GetKeys`.
+
 > Targets `https://chirpstack.siot.solutions` (production). **Not** the dev copy at `10.10.8.140:8080`.
 > Region AS923, OTAA, LoRaWAN 1.0.3. Background + AT cheatsheet: [docs/LORAWAN_PROVISIONING.md](../../../docs/LORAWAN_PROVISIONING.md).
 

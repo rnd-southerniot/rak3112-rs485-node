@@ -54,6 +54,18 @@ def main():
     if len(app_key) != 32 or any(c not in "0123456789abcdef" for c in app_key):
         die("APP_KEY must be 32 hex chars (16 bytes)")
     name = f"fw-{dev_eui[-6:]}"
+    explicit_key = bool(os.environ.get("APP_KEY"))  # did the caller PIN a specific AppKey?
+
+    # PRE-CHECK: is this DevEUI already registered? Create + CreateKeys are idempotent — on an
+    # EXISTING device CreateKeys is a NO-OP, so the STORED key wins and a freshly-passed APP_KEY is
+    # silently ignored => AppKey mismatch => join MIC fail (RadioLib -1116). ALWAYS check first.
+    pre_key = None
+    try:
+        _pg = cs.call("/api.DeviceService/GetKeys", api.GetDeviceKeysRequest(dev_eui=dev_eui),
+                      api.GetDeviceKeysResponse, jwt)
+        pre_key = _pg.device_keys.app_key.lower() if _pg and _pg.device_keys.app_key else None
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        pre_key = None  # NOT_FOUND / no keys yet — normal for a fresh DevEUI
 
     dev = api.Device(dev_eui=dev_eui, name=name, application_id=APP_ID, device_profile_id=DP_ID,
                      is_disabled=False, description="firmware bring-up — auto-provisioned (delete after test)")
@@ -80,10 +92,29 @@ def main():
             "(A tenant token reads UNAUTHENTICATED for a missing device; that is NOT a bad token.)")
     stored_key = (gk.device_keys.app_key.lower() if gk and gk.device_keys.app_key else app_key)
 
-    print("PASS: device provisioned")
+    # The device pre-existed with a DIFFERENT key than requested — CreateKeys did not overwrite it.
+    if pre_key is not None and pre_key != app_key:
+        print("", file=sys.stderr)
+        print("WARN: DevEUI was ALREADY REGISTERED with a different AppKey — CreateKeys was a no-op.",
+              file=sys.stderr)
+        print(f"      stored (authoritative): {stored_key}", file=sys.stderr)
+        if explicit_key:
+            print(f"      requested (NOT applied): {app_key}", file=sys.stderr)
+            print("      Your APP_KEY was NOT written. To actually use it, deprovision + re-provision",
+                  file=sys.stderr)
+            print("      (also clears the DevNonce history so the fresh join is accepted):", file=sys.stderr)
+            print(f"        python3 .../lorawan-deprovision/deprovision.py {dev_eui}", file=sys.stderr)
+            print(f"        DEV_EUI={dev_eui} APP_KEY=<yours> python3 provision.py", file=sys.stderr)
+        print("      Otherwise FLASH THE STORED KEY above into the node (it must match to join).",
+              file=sys.stderr)
+        print("", file=sys.stderr)
+
+    print("PASS: device provisioned" + (" (PRE-EXISTING — see WARN above)" if pre_key else ""))
     print(f"  name      {got.device.name}")
     print(f"  DevEUI    {dev_eui}")
-    print(f"  AppKey    {stored_key}")
+    print(f"  AppKey    {stored_key}" + ("   <- STORED key (your requested key was NOT applied)"
+                                         if (pre_key is not None and pre_key != app_key and explicit_key)
+                                         else ""))
     print("  JoinEUI   0000000000000000   (AS923 OTAA — AppEUI/JoinEUI unconstrained on this profile)")
     print(f"  app_id    {APP_ID}")
     print("Flash into firmware (docs/LORAWAN_PROVISIONING.md), then run lorawan-verify-join.")

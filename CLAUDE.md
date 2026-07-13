@@ -5,6 +5,11 @@
 > **Owner:** rnd-southerniot · `arif-southern`
 > **Repo path:** `~/Developer/projects/firmware/rak3112-rs485-node/`
 > **Mode:** **split-repo** — this is the *firmware* repo only. Hardware lives separately (see §0.1).
+>
+> **▶ Multi-repo platform:** this repo is careflow **firmware only** and is decoupled from the platform.
+> Platform / CRM / ChirpStack / deploy / E2E / ops work + memory now live under **`siot-ops`** — start there
+> and read **`siot-ops/PLATFORM_MAP.md`** (repo topology + session router). Platform memory was relocated out
+> of this repo's scope on 2026-07-13; this scope now holds firmware memory only.
 
 > **⚠ Three-layer topology (P7, 2026-07-08).** This firmware repo now consumes the shared LoRaWAN
 > component and the CRM automation has a canonical home:
@@ -16,6 +21,16 @@
 >   cutover (coordinated with Fahim); after cutover, `api/`+`tools/` here become legacy pointers.
 > - **Device profiles stay v1 here** (senseflow uses v2); the v1→v2 unification is a deferred migration.
 > Skills: `provision-node`, `install-chirpstack-decoder` (this repo's `.claude/skills/`).
+>
+> **⚠ CRM↔hub provisioning-protocol placeholder contract (2026-07-13).** The WebSerial flasher renders
+> `provisioning-protocol` commands by substituting each `<placeholder>` in a command `syntax` with
+> `context[name]`, where the flasher's context keys are camelCase `{devEui, joinEui, appKey, baud, parity,
+> stopBits, slaveId, blobHex}`. A placeholder that doesn't match a key throws `renderProvisioningCommands:
+> no context value for <NAME>` and the flash fails. `_CMD_PROFILE` in `api/routers/builds.py` used
+> `<hexblob>` (C6 regression) instead of the flasher key `<blobHex>` → every careflow flash failed. Fixed
+> in all 3 copies (this repo `api/`, `siot-node-firmware-automation`, deployed hub `siot-firmware-automation`
+> PR #8). Any new `prov-*` command's placeholders MUST match the flasher keys exactly. See the flash-flow
+> gotchas in the `provision-node` skill + `docs/RUNBOOK.md`.
 
 ---
 

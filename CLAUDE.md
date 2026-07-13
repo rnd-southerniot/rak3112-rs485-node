@@ -6,10 +6,10 @@
 > **Repo path:** `~/Developer/projects/firmware/rak3112-rs485-node/`
 > **Mode:** **split-repo** — this is the *firmware* repo only. Hardware lives separately (see §0.1).
 >
-> **▶ Multi-repo platform:** this repo is careflow **firmware only** and is decoupled from the platform.
-> Platform / CRM / ChirpStack / deploy / E2E / ops work + memory now live under **`siot-ops`** — start there
-> and read **`siot-ops/PLATFORM_MAP.md`** (repo topology + session router). Platform memory was relocated out
-> of this repo's scope on 2026-07-13; this scope now holds firmware memory only.
+> **▶ FROZEN ORIGINAL.** careflow firmware development moved to the **`siot-node-firmware` monorepo**
+> (`products/careflow`); this repo is kept for Phase 1-7 history + a legacy `api/` copy. **All memory (firmware
+> + platform) lives in ONE canonical home — the `siot-node-firmware` monorepo scope**; this repo holds none.
+> Repo topology + "which repo do I start from?" router → **`siot-ops/PLATFORM_MAP.md`**.
 
 > **⚠ Three-layer topology (P7, 2026-07-08).** This firmware repo now consumes the shared LoRaWAN
 > component and the CRM automation has a canonical home:

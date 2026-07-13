@@ -1330,3 +1330,34 @@ For this project, pattern (a) is sufficient at the current scale. Future Phase 3
 **Reference incident:** EC-2 (2026-05-01) committed stale CHECKSUMS.txt for `esch-pin-labels.json`. Detected at EC-9 pre-flight (2026-05-02). No data corruption, no contract violation rolled forward downstream — but the EC-2 gate was technically failing during EC-3..EC-7. Worth a small audit of the EC-3..EC-7 commits if any depended on `sha256sum -c` passing.
 
 **Promotion candidate** for global CLAUDE.md (joining the four prior lessons — five total now).
+
+## CRM WebSerial E2E — provisioning-protocol contract + flash-flow lessons (2026-07-13)
+
+Hit while driving the careflow `rak3212-rs485` (board MAC `3C:DC:75:6F:85:DC`) through the SCOMM CRM UI on VM 141.
+
+**ROOT CAUSE — provisioning-protocol placeholder must match the flasher's context key.** The WebSerial
+flasher (`scomm-web-prod`) renders each protocol command by `syntax.replace(/<(\w+)>/g, (_,name)=>ctx[name])`
+against a camelCase context map `{devEui, joinEui, appKey, baud, parity, stopBits, slaveId, blobHex}` (devEui
+← board boot log; joinEui/appKey ← mint; baud/… ← sensor modbus cfg; **blobHex ← `profile-blob …?taskId&nodeId`
+`.blobHex`**). `_CMD_PROFILE` in `api/routers/builds.py` advertised `prov-profile <hexblob>` (C6 change), but
+`hexblob` ≠ `blobHex` → `renderProvisioningCommands: no context value for <hexblob>` → **every careflow flash
+failed**. Every other placeholder already matched. **Fix = `<hexblob>`→`<blobHex>`** in all 3 copies (this
+repo `api/`, `siot-node-firmware-automation`, deployed hub `siot-firmware-automation` PR #8). Lesson: the
+`<placeholder>` names inside `syntax` are a HARD CRM↔hub contract — mirror the flasher's keys exactly. This
+was contract drift exposed when the CRM was rebuilt on VM 141.
+
+**Flash-flow traps (all CRM/flasher UX, not firmware):**
+- **Editing a product recreates its productNode with a new id** → orphans an open flash page (profile-blob/
+  protocol 404 → hexblob error). Configure profiles before flashing; **hard-reload after any product edit**.
+- **A FAILED flash blocks retry via the D-14 over-flash gate** — the `device_provisionings` row
+  (`nvsStatus=FAILED`, no `devEui`) still counts against `expected N = hardware_procurements.quantity`. Delete
+  the failed row to retry. (CRM bug: a FAILED provisioning should not count / Re-run should reuse it.)
+- **A "deleted device that reappears" in the flash modal = stale client-side modal state**, not a backend/
+  contract bug (`GET /provisioning/task/<id>/devices` is the source of truth). Reload clears it.
+- **WebSerial needs Chrome/Edge + a secure context** — `ssh -L 8090:localhost:8090 siot-ops` → open
+  `http://localhost:8090`; the raw IP `:8090` is an insecure context and is blocked even in Chrome.
+
+**Decode + fan-out verified independently:** deployed ChirpStack fleet codec decodes RS-FSJT `0102000028` →
+`{device:"RS-FSJT-N01", wind:0.4}`; Node-RED → InfluxDB + HA-discovery + Mattermost are wired and client-scoped
+off ChirpStack `tenantName` (per-client tenant; gateway tenant `52f14cd4` non-private → shared gateway serves
+cross-tenant joins).

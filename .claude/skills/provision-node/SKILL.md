@@ -58,3 +58,21 @@ creds) provisioned at flash time. Background: the CRM firmware agent guide + `do
   is operationally sensitive.
 - One image, provision by **data**. Device selection (MFM384/RS-FSJT) + slave/unit ID are NVS values,
   not separate builds.
+
+## CRM WebSerial flash-flow gotchas (VM-141 platform)
+
+- **provisioning-protocol placeholder = flasher context key (HARD contract).** The flasher substitutes
+  each `<placeholder>` in a command `syntax` with `context[name]`, where the flasher's keys are camelCase
+  `{devEui, joinEui, appKey, baud, parity, stopBits, slaveId, blobHex}`. A wrong placeholder name →
+  `renderProvisioningCommands: no context value for <NAME>` and the flash fails. `blobHex` (NOT `hexblob`)
+  comes from `GET /provisioning/firmware-build/profile-blob/<key>?taskId&nodeId`. Any new `prov-*` command
+  in `api/routers/builds.py` must use these exact names. (Fixed `<hexblob>`→`<blobHex>` 2026-07-13.)
+- **Editing a product recreates its productNode with a new id** → orphans an already-open flash page
+  (profile-blob/protocol 404 → hexblob error). **Configure profiles before flashing; hard-reload after any
+  product edit.**
+- **A FAILED flash blocks retry via the D-14 over-flash gate** — the failed `device_provisionings` row
+  (`nvsStatus=FAILED`, no `devEui`) still counts. Delete it to retry.
+- **A deleted device "reappears" in the flash modal** = stale client-side modal state, not a contract bug
+  (`GET /provisioning/task/<id>/devices` is the truth). Reload clears it.
+- **WebSerial needs Chrome/Edge + a secure context** — `ssh -L 8090:localhost:8090 siot-ops` → open
+  `http://localhost:8090` (localhost is secure over HTTP); the raw IP is blocked.

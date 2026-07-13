@@ -173,7 +173,7 @@ _CMD_CREDS = {
 _CMD_PROFILE = {
     "id": "prov-profile",
     "description": "Store the selected device-profile blob in NVS (device register/sensor map + ADR-005 payload)",
-    "syntax": "prov-profile <hexblob>",
+    "syntax": "prov-profile <blobHex>",
     "example": "prov-profile 02100176…",
     "nvsKeys": ["prov/profile"],
 }
@@ -203,6 +203,14 @@ async def get_provisioning_protocol(
     to careflow, whose payload is byte-identical to before). The WebSerial flasher renders its
     provisioning UI from this: careflow = prov-modbus/creds/show; senseflow = prov-creds/prov-profile/
     show (no modbus). ``appKey`` is flagged ``secret: true`` and is NEVER populated (T-01-09 / D-07).
+
+    PLACEHOLDER CONTRACT (hard, do not drift). Every ``<placeholder>`` token in a command's ``syntax``
+    is substituted by the flasher with ``context[placeholderName]``; its context map uses camelCase keys
+    ``{devEui, joinEui, appKey, baud, parity, stopBits, slaveId, blobHex}``. A placeholder with no matching
+    key throws ``renderProvisioningCommands: no context value for <NAME>`` and the flash fails — so each
+    placeholder name MUST match one of those keys exactly. ``blobHex`` = the ``.blobHex`` field of
+    ``GET /provisioning/firmware-build/profile-blob/<key>?taskId&nodeId``. If a protocol omits the
+    ``prov-profile`` command, the flasher self-appends ``prov-profile <blobHex>`` itself.
     """
     prod = resolve_product(request, product)
     builders = {"modbus": _CMD_MODBUS, "creds": _CMD_CREDS, "profile": _CMD_PROFILE}
